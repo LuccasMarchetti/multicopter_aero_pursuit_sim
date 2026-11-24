@@ -1,0 +1,290 @@
+\chapter{MPC dinâmico (modelo de corpo rígido do x500)}
+\label{cap:mpcdin}
+
+\section{Modelo}
+Arquivos \code{control/quadrotor\_model.cpp} e \code{control/dynamic\_mpc\_controller.cpp}.
+Linearizando em torno do pairar, no referencial de rumo (yaw congelado no horizonte), cada
+eixo horizontal $h\in\{\text{frente},\text{esquerda}\}$ fica com estado
+$x=[p,\ v,\ \theta,\ \omega]$ e entrada $u=\tau/\tau_{max}$:
+\begin{equation}
+  \dot x =
+  \begin{bmatrix}
+    0&1&0&0\\
+    0&-D/m&g&0\\
+    0&0&0&1\\
+    0&0&0&0
+  \end{bmatrix}x+
+  \begin{bmatrix}0\\0\\0\\ \tau_{max}/I\end{bmatrix}u,
+  \qquad
+  G_h(s)=\frac{P(s)}{U(s)} = \frac{g\,\tau_{max}/I}{s^3\,(s+D/m)} .
+\end{equation}
+O eixo vertical é um duplo integrador com $u=a_z$. Discretização por ZOH exato
+(\code{discretizeZoh}, exponencial da matriz aumentada; no MATLAB, \code{c2d(sys,Ts,'zoh')}).
+
+\paragraph{Números do x500.} $\tau_{max}$ (rolagem/arfagem) $=\SI{2,43}{N.m}$; com
+\code{torque\_authority}=0,5, $\tau_{max}=\SI{1,21}{N.m}$ e
+$\tau_{max}/I=\SI{56}{rad/s^2}$. $D/m=\SI{0,12}{s^{-1}}$ (desprezível). Inclinação
+limitada a $\min(\code{max\_tilt},\ \arctan(a_{max}/g))=\ang{17}$.
+
+\section{Diferenças em relação ao MPC cinemático}
+\begin{itemize}
+  \item A planta é de \textbf{4ª ordem} ($1/s^4$ efetivo). O MPC ``vê'' que inclinar
+        leva tempo e antecipa as manobras.
+  \item Com \code{output: attitude} o comando \emph{não} passa pela malha de velocidade
+        da PX4: vai direto como \code{VehicleAttitudeSetpoint} (quaternion + empuxo).
+        A banda pode ser maior, mas a responsabilidade pela estabilidade translacional é
+        toda do MPC.
+  \item O estado de atitude vem da odometria (\code{PursuitState::vehicle}).
+\end{itemize}
+
+\begin{atencao}
+\textbf{Descasamento de modelo.} O modelo supõe que o torque é a entrada, mas na
+prática a PX4 recebe uma \emph{atitude} e a segue com seu P de atitude
+($\omega_a=\code{MC\_PITCH\_P}=4$) e seu PID de taxa. A dinâmica real de
+$\theta_{sp}\to\theta$ é de $\approx$1ª ordem com $\tau\approx\SI{0,25}{s}$, bem mais
+lenta que $\tau_{max}/I$ sugere. Para o TCC, compare duas variantes:
+(a) o modelo atual e (b) um modelo com $\dot\theta=\omega_a(\theta_{sp}-\theta)$ e
+$u=\theta_{sp}$ (3ª ordem). A variante (b) costuma prever melhor o drone real
+(\code{projeto\_mpc\_dinamico.m}).
+\end{atencao}
+
+\section{Pesos e projeto}
+\begin{itemize}
+  \item $w_p,w_v$ como no cinemático; $w_\theta$ penaliza inclinação (proteção do campo de
+        visão da câmera); $w_\omega$ e $w_\tau$ suavizam.
+  \item Horizonte: $N=20$, $\Ts=\SI{0,05}{s}$ ($T_H=\SI{1}{s}$, uniforme).
+  \item Equivalente linear: como antes, $u_0=-K_{MPC}x_0$, agora com 4 ganhos por eixo
+        ($k_p,k_v,k_\theta,k_\omega$). A margem é calculada sobre $G_h(s)$ com atraso.
+  \item ``Ótimo'' de referência: o LQR infinito do mesmo modelo
+        (\code{dlqr} sobre o $A,B$ discretizado) é o limite $N\to\infty$.
+\end{itemize}
+
+\section{Saídas para a PX4 (\code{output})}
+\label{sec:mpcdin_saidas}
+O mesmo MPC pode entregar quatro níveis de comando. Quanto mais baixo o nível, menos
+malhas da PX4 ficam no caminho, e maior é a responsabilidade do nosso controlador:
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{2.4cm}p{6.2cm}p{5.6cm}@{}}
+\toprule
+Saída & Mensagem (modo Offboard) & Quem estabiliza a atitude \\
+\midrule
+\code{trajectory}    & \code{TrajectorySetpoint} (velocidade)            & PX4 (todas as malhas) \\
+\code{attitude}      & \code{VehicleAttitudeSetpoint}                    & PX4 (P de atitude + PID de taxa) \\
+\code{thrust\_torque}& \code{VehicleThrust/TorqueSetpoint} (\code{thrust\_and\_torque}) & malha interna própria; mistura da PX4 \\
+\code{motors}        & \code{ActuatorMotors} (\code{direct\_actuator})   & malha interna e alocação próprias \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Estrutura das técnicas MPC}
+\label{sec:mpc_estrutura}
+Para comparar as técnicas, cada uma tem o mesmo conjunto de chaves, com o significado ligado ao seu
+modelo:
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{2.2cm}p{3.6cm}p{3.2cm}p{3.0cm}p{3.4cm}@{}}
+\toprule
+Técnica & \code{mpc.lag} modela & Saídas & Yaw & Altitude \\
+\midrule
+\code{mpc} cinemático & malha de velocidade, $\dot{\vect v}=(\vect v_r-\vect v)/\tau$ & as quatro & \code{yaw\_mode} & \code{vertical\_mode} em malha separada (\code{los}: o MPC) \\
+\code{mpc} dinâmico & malha de atitude (\code{attitude\_model}); sem lag: atitude ideal & \code{attitude}, \code{thrust\_torque}, \code{motors} & \code{yaw\_mode} & \code{vertical\_mode} como referência de $z$ \emph{dentro} do MPC \\
+\code{ibvs\_mpc} & malha de velocidade, como no cinemático & as quatro & dentro do MPC & dentro do MPC (imagem no custo) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{itemize}
+  \item \textbf{Lag}: com ele, a malha interna que executa o comando entra no modelo; o restante do
+        problema (custo, restrições, predição do alvo) não muda, então ligar/desligar compara só o
+        modelo. Com os mesmos pesos, o modelo com lag reduz o sobressinal da aproximação (no teste
+        unitário com $\tau=\SI{0,4}{s}$, de \SI{1,09}{} para \SI{0,49}{m}), mas é menos agressivo
+        contra alvo em curva.
+  \item \textbf{Sem \code{trajectory} no dinâmico}: o modelo já contém a dinâmica de atitude; a malha
+        de velocidade da PX4 ficaria entre o modelo e a planta. O nó recusa a combinação e ajusta
+        para \code{attitude}.
+  \item \textbf{Altitude no dinâmico}: o empuxo é entrada do MPC, então \code{match\_altitude} e
+        \code{center\_image} viram a referência $z_{ref}(t)=\Delta z+v_z t$ do subproblema vertical
+        (\code{control/vertical\_policy}, \code{PursuitState::vertical}); nas leis cinemáticas a política
+        substitui o canal $z$ do comando (malha separada).
+\end{itemize}
+
+\subsection{Saídas diretas nos modelos cinemáticos}
+\label{sec:saida_cinematica}
+O parâmetro \code{output} vale para toda a família MPC (\code{mpc} em todo \code{mpc.mode} e
+\code{ibvs\_mpc}); as demais leis aceitam só \code{trajectory}. Os modelos cinemáticos produzem
+velocidade de referência $\vect v_r$ e aceleração $\vect a_{ff}$; com uma saída direta, a malha de
+velocidade da PX4 é substituída pela do nó (\code{control/velocity\_loop.cpp}), a cada odometria:
+\begin{equation}
+  \vect a=\vect a_{ff}+K_p(\vect v_r-\vect v)+\textstyle\int K_i(\vect v_r-\vect v)\,dt,\qquad
+  \mathbf{T}_d=m(\vect a+g\,\vect e_z),
+\end{equation}
+com $\vect v_r$ extrapolado por $\vect a_{ff}$ entre os ciclos da lei, componente vertical
+priorizada, inclinação limitada a \code{max\_tilt\_deg} e integração condicional (o integrador
+absorve o arrasto e o erro do empuxo de hover). Ganhos padrão = PX4
+(\code{MPC\_XY\_VEL\_P/I\_ACC}, \code{MPC\_Z\_VEL\_P/I\_ACC}). A atitude sai de $\mathbf{T}_d$ por
+planicidade com o yaw da lei (IBVS) ou da política de yaw. Com \code{mpc.lag}, \code{mpc.lag.tau}
+passa a ser o atraso desta malha ($\approx 1/K_p$), não o da PX4.
+
+\subsection{Validação no SITL: cada modelo com cada saída}
+\label{sec:saidas_sitl}
+Estudo \code{scenarios/studies/mpc\_outputs\_quick.yaml}: cenário \code{s3\_figure8} (\SI{45}{s}),
+detecção omnisciente, 1 repetição. Todas as 16 combinações voaram até o fim sem LOST, e o
+\code{/pursuit/status} confirmou a saída ativa em cada uma. O erro de posição RMS inclui a aproximação
+inicial (alvo a $\sim$\SI{20}{m}); a mesma variante repetida variou até \SI{1}{m}, então diferenças
+menores que isso não são conclusivas.
+
+\begin{center}
+\small
+\begin{tabular}{@{}llccc@{}}
+\toprule
+Modelo & Saída & erro de posição RMS [m] & erro de imagem RMS [rad] & $\int\|\vect a\|^2$ \\
+\midrule
+\code{kinematic}     & trajectory / attitude / thrust\_torque / motors & 4,46 / 4,51 / 4,56 / 4,37 & 0,20 / 0,22 / 0,22 / 0,22 & 111 / 123 / 106 / 110 \\
+\code{kinematic\_lag} & idem & 4,12 / 4,20 / 4,11 / 4,02 & 0,16 / 0,19 / 0,19 / 0,19 & 169 / 185 / 228 / 224 \\
+\code{dynamic}       & idem & 4,29 / 4,82 / 4,68 / 4,17 & 0,24 / 0,40 / 0,61 / 0,60 & 73 / 91 / 84 / 76 \\
+\code{ibvs\_mpc}     & idem & 4,13 / 4,09 / 3,74 / 3,35 & 0,13 / 0,14 / 0,13 / 0,13 & 124 / 126 / 116 / 112 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Dois defeitos apareceram e foram corrigidos: com \code{thrust\_torque}/\code{motors} o IBVS quase não
+girava (erro de imagem \SI{1,1}{rad}), porque ele comanda o yaw pela taxa e a malha interna descartava o
+\emph{feedforward} de taxa; agora as referências cinemáticas o usam (só a taxa de guinada). A tabela acima
+é anterior à reestruturação: a linha \code{kinematic\_lag} era outro MPC (ganho fixo, sem restrições nem
+predição do alvo), substituído por \code{mpc.lag}, e o dinâmico ainda tinha \code{trajectory} e ignorava
+\code{vertical\_mode}.
+
+\paragraph{Depois da reestruturação} (\code{scenarios/studies/mpc\_lag\_dynamic\_quick.yaml}, mesmo cenário,
+1 repetição; alvo com aceleração de \SI{3}{m/s^2}, seguindo a referência com \SI{0,586\pm0,002}{m}):
+
+\begin{center}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Variante & erro de posição após \SI{15}{s} [m] & az / el RMS & erro de imagem [rad] \\
+\midrule
+dinâmico, lag, \code{attitude}, \code{los}            & 0,76 & $27{,}3^\circ$ / $42{,}5^\circ$ & 0,83 \\
+dinâmico, sem lag (atitude ideal), \code{los}         & 1,75 & $19{,}5^\circ$ / $37{,}9^\circ$ & 0,70 \\
+dinâmico, lag, \code{match\_altitude} (dentro do MPC) & 1,86 & $5{,}5^\circ$ / $5{,}8^\circ$ & 0,14 \\
+\code{ibvs\_mpc}, lag ($\tau=\SI{0,2}{s}$), \code{trajectory} & 0,56 & $2{,}6^\circ$ / $3{,}5^\circ$ & 0,09 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Com \code{los} o MPC preserva o ângulo de elevação da aproximação: com a câmera fixa o alvo fica a
+$\sim$\SI{40}{\degree} de elevação e o \code{face\_target} oscila (taxas de até \SI{3}{rad/s}). A política
+vertical dentro do MPC dinâmico resolve isso; sem lag, o dinâmico perde precisão de posição (0,76 →
+\SI{1,75}{m}), o que mostra o peso do modelo da malha de atitude.
+
+\subsection{Malha interna em SO(3)}
+Nas duas últimas saídas, a PX4 não roda os controladores de atitude e taxa.
+O nó \code{pursuit\_controller} executa, a cada odometria ($\approx$\SI{80}{Hz} no SITL),
+um controlador geométrico \cite{lee2010geometric}
+(\code{control/attitude\_tracker.cpp}) sobre a última atitude desejada $R_d$ do MPC:
+\begin{equation}
+  e_R=\tfrac12\left(R_d^\top R-R^\top R_d\right)^\vee,\qquad
+  e_\omega=\omega,\qquad
+  \tau=-K_R e_R-K_\omega e_\omega+\omega\times I\omega,
+\end{equation}
+com ganhos por eixo a partir da banda desejada, $K_R=I\omega_n^2$ e
+$K_\omega=2\zeta\omega_n I$ (padrão $\omega_n=\SI{10}{rad/s}$ em rolagem/arfagem,
+\SI{4}{rad/s} em guinada, $\zeta=0{,}9$). O empuxo coletivo é a projeção do vetor de empuxo
+desejado no eixo $z$ atual do corpo, $T=\mathbf{T}_d\cdot b_3$.
+
+\subsection{Alocação nos motores}
+O modelo físico do Gazebo (\code{MulticopterMotorModel}) dá, para cada rotor $i$,
+$T_i=k_f\omega_i^2$ e torque de reação $\mp k_m T_i$ (sinal pelo sentido de giro). Com os
+rotores em $(\pm0{,}174;\pm0{,}174)$\,m:
+\begin{equation}
+  \begin{bmatrix}F\\ \tau_x\\ \tau_y\\ \tau_z\end{bmatrix}
+  = \underbrace{\begin{bmatrix}
+      1&1&1&1\\ y_0&y_1&y_2&y_3\\ -x_0&-x_1&-x_2&-x_3\\ -s_0k_m&\cdots&&-s_3k_m
+    \end{bmatrix}}_{W}
+  \begin{bmatrix}T_0\\T_1\\T_2\\T_3\end{bmatrix},
+\end{equation}
+resolvida por $T=W^{-1}[F;\tau]$. Na saturação, reduz-se primeiro a guinada, depois
+rolagem/arfagem e por último o coletivo (bisseção do fator de escala). O comando de cada
+motor é linear na rotação entre \code{SIM\_GZ\_EC\_MIN} e \code{SIM\_GZ\_EC\_MAX}:
+$u_i=(\sqrt{T_i/k_f}-\omega_{min})/(\omega_{max}-\omega_{min})$.
+
+Em \code{thrust\_torque}, a PX4 faz a mistura com a pseudo-inversa \emph{normalizada}
+da sua matriz de efetividade $E$ (parâmetros \code{CA\_ROTOR*}):
+$u=\operatorname{pinv}(E)\,S^{-1}c$. Escolhendo $c=S\,E\,u$, o alocador da PX4 devolve
+exatamente o $u$ calculado pelo modelo físico, porque $E$ tem posto 4. O teste
+\code{MotorAllocation.Px4AllocatorReproducesMotorCommands} verifica isso.
+
+\begin{atencao}
+\textbf{Lição de projeto: feedforwards do MPC desestabilizam a malha interna.}
+O primeiro voo com \code{thrust\_torque}/\code{motors} capotou o drone. A gravação mostrou
+uma oscilação crescente em $\approx\SI{1,5}{Hz}$ ($\approx\omega_n$) com motores saturados.
+A simulação completa (MPC + malha interna + atraso de 2 amostras de odometria + constantes
+de tempo dos motores) reproduziu o problema: usar a taxa prevista $\omega_d$ do MPC em
+$e_\omega=\omega-R^\top R_d\omega_d$ diverge \emph{para qualquer} $\omega_n$. O motivo é que o
+MPC roda a \SI{20}{Hz}, então $R_d$ fica constante por \SI{50}{ms} enquanto $\omega_d\neq0$
+pede movimento, e as duas referências se contradizem dentro do passo. O feedforward
+$I\dot\omega_d$ também é nocivo: as entradas do MPC são quase \emph{bang-bang} e saturam os
+motores. Por isso ambos vêm desligados (\code{rate\_feedforward}, \code{torque\_feedforward}).
+O teste \code{DynamicMpcInnerLoop.TorqueModelRateFeedforwardDiverges} documenta a divergência (com o modelo de torque; ver \cref{sec:mpc-dinamico-atitude}).
+Com eles desligados, as três saídas voaram no Gazebo sem abortos.
+\end{atencao}
+
+\paragraph{Segurança.} Se o erro de \emph{inclinação} (ângulo entre os eixos $z$ do corpo
+atual e desejado) passar de \ang{60}, ou se a referência/odometria envelhecer, o nó para de
+publicar. Após \SI{0,25}{s} o \code{offboard\_control} volta a segurar posição com as malhas
+da PX4. O erro de guinada fica fora do critério: depois de um \emph{hold}, ele pode
+facilmente passar de \ang{150} sem risco algum, e incluí-lo impedia o reengajamento.
+
+\section{Atitude como entrada: o descasamento resolvido}
+\label{sec:mpc-dinamico-atitude}
+Nos voos com $d=\SI{5}{m}$, o modelo de torque oscilava entre 2 e \SI{8,6}{m} (desvio
+padrão de \SI{1,0}{m} com o alvo parado, \SI{1,6}{m} na altitude). A causa: o MPC
+otimizava o torque e enviava a inclinação \emph{prevista um passo} (\SI{50}{ms}) à frente,
+que é quase a atitude atual. A PX4, porém, segue a atitude com atraso: medindo comando e
+resposta em voo, a atitude real ficou \SI{300}{ms} de relógio ($\approx\SI{210}{ms}$ de
+simulação, com fator de tempo real $\approx0{,}7$) atrás do comando. O comando efetivo era
+fraco e atrasado, e a malha externa fechava um ciclo lento de \SI{0,2}{Hz}.
+
+A correção é modelar o que a PX4 (ou a malha interna própria) realmente faz e usar a
+\emph{inclinação comandada} como entrada. Com $u=\theta_{cmd}/\theta_{max}\in[-1,1]$:
+\begin{equation}
+  \dot p=v,\qquad m\dot v=mg\,\theta-Dv,\qquad
+  \dot\omega=\omega_n^2(\theta_{max}u-\theta)-2\zeta\omega_n\,\omega,
+\end{equation}
+com a taxa $\omega$ medida no estado inicial (\code{attitude\_model: second\_order}). O par
+$(\omega_n,\zeta)$ aproxima o P de atitude (\code{MC\_ROLL\_P} $=6{,}5$) em série com a
+malha de taxa ($\approx\SI{20}{rad/s}$): $\omega_n=\sqrt{6{,}5\cdot20}\approx\SI{11}{rad/s}$
+e $\zeta\approx0{,}9$. A primeira entrada ótima $u_0$ é enviada diretamente. Há também a
+versão de 1ª ordem $\dot\theta=(\theta_{cmd}-\theta)/\tau$ (\code{tilt\_command}) e o
+modelo antigo de torque (\code{torque}), mantido para comparação.
+
+\begin{atencao}
+\textbf{O peso da entrada decide a estabilidade.} Com \code{weight\_torque} (aqui, o peso de
+$u^2$) abaixo de 10, surgia um ciclo-limite de $\pm\ang{8}$ em rolagem e arfagem a
+$\approx\SI{1}{Hz}$. A posição quase não se movia ($\approx\SI{7}{cm}$), mas a aceleração
+chegava a \SI{3,6}{m/s^2} RMS. Nem $\tau$ nem $\omega_n$ removiam o ciclo, porque o atraso
+real de $\approx\SI{0,2}{s}$ não está no modelo. Com o peso 30 (padrão):
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+$d=\SI{5}{m}$, saída \code{attitude} & alvo parado ($\sigma$) & zigue-zague $\pm\SI{1}{m/s}$ ($\sigma$) \\
+\midrule
+torque (antigo) & \SI{1,0}{m} & \SI{0,64}{m} \\
+second\_order, peso 30 & \SI{6}{mm} & \SI{0,15}{m} \\
+MPC cinemático (referência) & \SI{4}{mm} & \SI{0,04}{m} \\
+\bottomrule
+\end{tabular}
+\end{center}
+Com o novo modelo, o \emph{feedforward} de taxa da malha interna deixou de divergir. O teste
+\code{SecondOrderModelToleratesRateFeedforward} documenta isso.
+\end{atencao}
+
+\paragraph{Saídas \code{thrust\_torque} e \code{motors}.} O \code{offboard\_control} exigia
+que o torque chegasse antes do empuxo. Como os dois vêm por tópicos diferentes num executor
+multithread, a ordem não é garantida: os pares eram descartados e o drone voltava a
+segurar posição. Agora eles são pareados pelo \code{timestamp\_sample}. As duas saídas voam
+(zigue-zague: $\sigma\approx\SI{0,1}{}$--\SI{0,26}{m}). A altitude ainda oscila até
+$\pm\SI{1}{m}$, porque o empuxo vertical está em malha aberta pelo modelo de \emph{throttle}.
+

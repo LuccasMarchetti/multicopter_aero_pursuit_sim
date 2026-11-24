@@ -1,0 +1,127 @@
+\chapter{Latência, atrasos e sintonia na prática}
+\label{cap:latencia}
+
+Os capítulos anteriores tratam cada lei de controle no tempo contínuo ou com um passo
+$\Delta t$ ideal. No SITL, entre o sensor e o motor há uma cadeia de etapas com taxas e atrasos
+próprios. Este capítulo reúne o que foi \textbf{medido em voo} e como cada atraso apareceu
+no controle. Depois resume a sintonia de cada método, com os parâmetros da aba
+\textbf{Controle} da GCS.
+
+\section{A cadeia de medida e atuação}
+\begin{table}[H]
+\centering
+\caption{Etapas entre a câmera e a PX4 (Gazebo headless, CPU de 16 núcleos, RX~6600).}
+\begin{tabular}{p{4.2cm}p{3.6cm}p{6.2cm}}
+\toprule
+Etapa & Taxa / atraso & Observação \\
+\midrule
+Câmera RGB / profundidade & 30\,Hz cada (sim.) & Sensores sem sincronismo: pareamento pelo carimbo mais próximo, $|\Delta t|\le\SI{50}{ms}$ \\
+TrackerVit (CPU) & $\approx24$\,Hz, $\approx\SI{55}{ms}$/quadro & Padrão \\
+TrackerVit (OpenCL, rusticl) & $\approx14$\,Hz, $\approx\SI{125}{ms}$/quadro & Mais lento: \code{gemm} cai para a CPU e não há \emph{kernels} ajustados \\
+Estimador (KF) & a cada medida & Visão: KF de velocidade constante. Omnisciente: pose exata, sem filtro \\
+Lei de controle & \SI{20}{Hz} de simulação & \emph{Solve} do MPC $\approx\SI{0,2}{ms}$ \\
+Fator de tempo real & $\approx0{,}6$--$0{,}7$ & Carga $\approx14$: \SI{20}{Hz} simulados $\approx$ \SI{14}{Hz} de relógio \\
+Atitude da PX4 & atraso $\approx\SI{0,21}{s}$ (sim.) & Medido: a atitude real fica \SI{300}{ms} de relógio atrás do comando \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Dois cuidados de medida aparecem repetidamente:
+\begin{itemize}
+  \item \textbf{Use o tempo de simulação.} Os nós usam \code{use\_sim\_time}. Com fator de
+        tempo real 0,7, um atraso de \SI{300}{ms} medido no relógio equivale a
+        \SI{210}{ms} no modelo.
+  \item \textbf{Compare no mesmo instante.} Comparar a estimativa com a TF \emph{mais
+        recente}, e não com a TF do carimbo da mensagem, inflou o erro do omnisciente de
+        \SI{7}{} para \SI{12}{cm} a \SI{2}{m/s}. O próprio teste introduzia o atraso.
+\end{itemize}
+
+\section{Como o atraso aparece no controle}
+Um atraso puro $T$ soma a fase $-\omega T$ sem mudar o ganho. Na frequência de cruzamento
+$\omega_c$, a margem de fase cai de $\omega_c T$ radianos. Com $T=\SI{0,2}{s}$ e
+$\omega_c=\SI{5}{rad/s}$, perdem-se \ang{57}: uma malha que parecia folgada passa a oscilar.
+Os casos encontrados:
+
+\begin{enumerate}
+  \item \textbf{MPC dinâmico com torque como entrada} (\cref{sec:mpc-dinamico-atitude}).
+        O comando era a inclinação prevista um passo à frente, quase a atitude atual. Com o
+        atraso real da atitude, o comando efetivo ficava fraco e atrasado, e surgia uma
+        oscilação lenta de \SI{0,2}{Hz} com $\pm\SI{2,4}{m}$. Correção: inclinação comandada
+        como entrada, com modelo de 2ª ordem da malha de atitude.
+  \item \textbf{Peso de entrada baixo no MPC dinâmico.} Mesmo com o modelo correto, o atraso
+        não modelado ($\approx\SI{0,2}{s}$) produzia um ciclo-limite de $\pm\ang{8}$ a
+        \SI{1}{Hz} com peso de entrada abaixo de 10. Reduzir a banda pedida (peso 30) recupera a
+        margem. Esse é o ajuste de \emph{loop shaping} clássico para uma planta com atraso.
+  \item \textbf{Realimentação da própria velocidade no \code{center\_image}.} O canal vertical
+        usava o \emph{feedforward} $v_{alvo,z}=v_{medida}+v_{rel}$, que contém a velocidade
+        medida do próprio perseguidor. Com o KF rápido, o ruído e o atraso dessa malha interna
+        fizeram o drone vibrar (\SI{1,6}{}--\SI{2,1}{m/s^2} RMS com o alvo parado, contra 0,03
+        em \code{los}). Um filtro de \SI{0,3}{s} (\code{vertical.feedforward\_filter}) reduziu
+        a vibração para \SI{0,06}{m/s^2}.
+  \item \textbf{Fila curta com processamento lento.} Com a inferência em OpenCL
+        ($\approx\SI{125}{ms}$), a profundidade, por estar no mesmo grupo de \emph{callback} da
+        imagem, deixava de ser guardada durante o processamento. Nenhum quadro casava no
+        carimbo e 0\,\% das detecções tinham profundidade. Grupo de \emph{callback} próprio:
+        100\,\%.
+  \item \textbf{Filtro como atraso.} O KF do omnisciente, sintonizado para a visão
+        ($\sigma_a=\SI{0,5}{m/s^2}$, $\sigma_z=\SI{0,1}{m}$), atrasava a estimativa
+        $\approx\SI{7}{cm}$ nas reversões a \SI{2}{m/s}. Se a medida é exata, filtrar só
+        acrescenta atraso. O omnisciente agora não filtra.
+  \item \textbf{Ordem de mensagens não garantida.} Empuxo e torque chegam por tópicos
+        separados. Exigir uma ordem descartava os pares e devolvia o drone à PX4. A solução
+        foi parear pelo carimbo.
+\end{enumerate}
+
+\begin{dica}
+Ao ver uma oscilação, meça primeiro a \textbf{frequência} e \textbf{qual grandeza} oscila
+(posição, atitude, comando). Depois compare \textbf{comando} e \textbf{resposta} no mesmo
+eixo de tempo. Neste projeto: oscilação de baixa frequência com posição grande indica modelo
+errado ou ganho baixo; atitude oscilando rápido com posição quase parada indica atraso não
+modelado e banda alta demais. Os scripts \code{pursuit\_quality.py}, \code{omni\_tremor.py} e
+o comparador comando × atitude da PX4 usados aqui estão em \code{aero\_pursuit/scripts}.
+\end{dica}
+
+\section{Vento como perturbação}
+O sistema \code{aero\_wind} (\code{wind\_node}) soma $\mathbf F=c_d\,\mathbf v_{vento}(\mathbf p)$
+a cada drone, a cada passo da física, com vento constante, frente com atraso de chegada,
+rajadas $1-\cos$, turbulência de Ornstein-Uhlenbeck e zonas. Para o controle, $\mathbf F$ é
+uma perturbação de entrada $\mathbf d=\mathbf F/m$ na dinâmica de translação:
+\begin{itemize}
+  \item As malhas de posição da PX4 inclinam o drone contra o vento. Com \SI{8}{m/s}
+        vindos do oeste e $c_d=\SI{0,25}{N/(m/s)}$ ($F=\SI{2}{N}$), o x500 inclinou
+        \ang{5,3} e manteve a perseguição.
+  \item No duplo integrador, uma perturbação constante deixa erro estacionário em leis sem
+        ação integral (LQR, MPC sem modelo de perturbação). O \textbf{LQI}
+        (\cref{cap:lqi}) o elimina pelo estado integral. O \textbf{SMC} (\cref{cap:smc})
+        a rejeita se o ganho de chaveamento superar $|\mathbf d|$.
+  \item Rajadas e turbulência são perturbações de banda larga: testam a robustez e o
+        \emph{chattering} do SMC e o \emph{windup} do LQI.
+\end{itemize}
+
+\section{Sintonia por método}
+\Cref{tab:sintonia} resume o efeito de cada parâmetro e os valores usados. Na GCS, a aba
+\textbf{Controle} mostra os mesmos grupos, com o método ativo aberto.
+
+\begin{table}[H]
+\centering
+\caption{Parâmetros de sintonia por método (nó \code{pursuit\_controller\_node}).}
+\label{tab:sintonia}
+\small
+\begin{tabular}{p{2.3cm}p{4.6cm}p{7.4cm}}
+\toprule
+Método & Parâmetros & Efeito e valores usados \\
+\midrule
+MPC cinemático & \code{mpc.weight\_pos/vel/acc}, \code{horizon\_N}, \code{horizon\_growth}, \code{predict\_los} & 10 / 2 / 0,5; $N=10$ com passos crescendo $1{,}15^k$ ($\approx\SI{1}{s}$). Mais \code{weight\_acc} deixa a resposta mais suave e lenta. \code{predict\_los} evita a deriva tangencial \\
+MPC dinâmico & \code{mpc.dynamic.attitude\_model}, \code{attitude\_bandwidth}, \code{attitude\_damping}, \code{weight\_torque}, \code{weight\_tilt} & \code{second\_order}, $\omega_n=11$, $\zeta=0{,}9$, peso de entrada 30 (abaixo de 10 há ciclo-limite) \\
+Malha interna & \code{mpc.dynamic.inner.*} & Banda \SI{10}{rad/s} em rolagem/arfagem e \SI{4}{rad/s} em guinada; aborta acima de \ang{60} \\
+LQR & \code{lqr.weight\_pos/vel/acc} & Mesmo modelo do MPC sem restrições; serve de referência \\
+LQI & \code{lqi.weight\_int}, \code{integral\_limit/zone} & Remove o erro estacionário (vento, alvo a velocidade constante); os limites evitam \emph{windup} \\
+PBVS PID & \code{pid.kp/ki/kd}, \code{feedforward} & PD sobre o erro relativo + \emph{feedforward} da velocidade do alvo \\
+ASMC & \code{asmc.lambda}, \code{adaptation\_rate}, \code{leakage}, \code{boundary\_layer} & $\lambda$ define a superfície; o ganho adapta com $|s|$; a camada-limite troca \emph{chattering} por erro residual \\
+Hermite & \code{hermite.weight\_jerk/time/limits}, \code{min/max\_duration} & A duração da trajetória minimiza \emph{jerk} + tempo + violação dos limites \\
+PN híbrida & \code{guidance.nav\_constant}, \code{range\_kp/kd}, \code{blend} & $N\approx3$--5; regulação de distância por PD \\
+Canal vertical & \code{vertical\_mode}, \code{vertical.gain}, \code{feedforward\_filter} & \code{los} é o mais estável; \code{center\_image} precisa do filtro de \SI{0,3}{s} \\
+APPROACH & \code{fallback.learn\_size}, \code{size\_filter}, \code{ttc\_*}, \code{boost\_*} & Tamanho do alvo aprendido com a profundidade; só o tempo até o contato não para o drone \\
+\bottomrule
+\end{tabular}
+\end{table}

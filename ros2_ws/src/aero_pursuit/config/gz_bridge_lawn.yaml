@@ -1,0 +1,124 @@
+# ros_gz_bridge for the "lawn" world (loaded as a component in the container).
+#  - lazy: only creates the Gazebo side when there are ROS subscribers (saves CPU/bandwidth).
+#  - queues of 1 for images: drops old frames instead of accumulating latency.
+
+- ros_topic_name: "/clock"
+  gz_topic_name: "/clock"
+  ros_type_name: "rosgraph_msgs/msg/Clock"
+  gz_type_name: "gz.msgs.Clock"
+  direction: GZ_TO_ROS
+
+# RGB camera (IMX214, 1920x1080 @ 30 Hz). Published as /camera.
+- ros_topic_name: "/camera"
+  gz_topic_name: "/world/lawn/model/x500_depth_0/link/camera_link/sensor/IMX214/image"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+  lazy: true
+  subscriber_queue: 1
+  publisher_queue: 1
+
+- ros_topic_name: "/camera/camera_info"
+  gz_topic_name: "/world/lawn/model/x500_depth_0/link/camera_link/sensor/IMX214/camera_info"
+  ros_type_name: "sensor_msgs/msg/CameraInfo"
+  gz_type_name: "gz.msgs.CameraInfo"
+  direction: GZ_TO_ROS
+  lazy: true
+
+# Profundidade (StereoOV7251, 640x480 R_FLOAT32 @ 30 Hz). Published as /depth_camera.
+- ros_topic_name: "/depth_camera"
+  gz_topic_name: "/depth_camera"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+  lazy: true
+  subscriber_queue: 1
+  publisher_queue: 1
+
+- ros_topic_name: "/depth_camera/camera_info"
+  gz_topic_name: "/camera_info"
+  ros_type_name: "sensor_msgs/msg/CameraInfo"
+  gz_type_name: "gz.msgs.CameraInfo"
+  direction: GZ_TO_ROS
+  lazy: true
+
+# GCS free camera (spectator_camera model inserted by the spectator_camera node).
+# Lazy: without the "Gazebo" view open, nothing is rendered or transported.
+- ros_topic_name: "/spectator/image"
+  gz_topic_name: "/spectator/image"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+  lazy: true
+  subscriber_queue: 1
+  publisher_queue: 1
+
+# Target drone commands (joystick/training; scenario_runner uses gz-transport directly)
+- ros_topic_name: "/X3/gazebo/command/twist"
+  gz_topic_name: "/X3/gazebo/command/twist"
+  ros_type_name: "geometry_msgs/msg/Twist"
+  gz_type_name: "gz.msgs.Twist"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/X4/gazebo/command/twist"
+  gz_topic_name: "/X4/gazebo/command/twist"
+  ros_type_name: "geometry_msgs/msg/Twist"
+  gz_type_name: "gz.msgs.Twist"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/Tiltrotor/gazebo/command/twist"
+  gz_topic_name: "/Tiltrotor/gazebo/command/twist"
+  ros_type_name: "geometry_msgs/msg/Twist"
+  gz_type_name: "gz.msgs.Twist"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/X5/gazebo/command/twist"
+  gz_topic_name: "/X5/gazebo/command/twist"
+  ros_type_name: "geometry_msgs/msg/Twist"
+  gz_type_name: "gz.msgs.Twist"
+  direction: ROS_TO_GZ
+
+# Turns the targets' velocity controller on/off (starts off in Gazebo).
+- ros_topic_name: "/X3/enable"
+  gz_topic_name: "/X3/enable"
+  ros_type_name: "std_msgs/msg/Bool"
+  gz_type_name: "gz.msgs.Boolean"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/X4/enable"
+  gz_topic_name: "/X4/enable"
+  ros_type_name: "std_msgs/msg/Bool"
+  gz_type_name: "gz.msgs.Boolean"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/Tiltrotor/enable"
+  gz_topic_name: "/Tiltrotor/enable"
+  ros_type_name: "std_msgs/msg/Bool"
+  gz_type_name: "gz.msgs.Boolean"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/X5/enable"
+  gz_topic_name: "/X5/enable"
+  ros_type_name: "std_msgs/msg/Bool"
+  gz_type_name: "gz.msgs.Boolean"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/model/X4/pose"
+  gz_topic_name: "/model/X4/pose"
+  ros_type_name: "geometry_msgs/msg/PoseStamped"
+  gz_type_name: "gz.msgs.Pose"
+  direction: BIDIRECTIONAL
+  lazy: true
+
+# World services (training / RL interface):
+#  - control: pause, step by step (multi_step) and simulation reset;
+#  - set_pose: repositions entities (e.g. evader at the start of the episode).
+- service_name: "/world/lawn/control"
+  ros_type_name: "ros_gz_interfaces/srv/ControlWorld"
+  gz_req_type_name: "gz.msgs.WorldControl"
+  gz_rep_type_name: "gz.msgs.Boolean"
+
+- service_name: "/world/lawn/set_pose"
+  ros_type_name: "ros_gz_interfaces/srv/SetEntityPose"
+  gz_req_type_name: "gz.msgs.Pose"
+  gz_rep_type_name: "gz.msgs.Boolean"

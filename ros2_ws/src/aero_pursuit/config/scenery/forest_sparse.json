@@ -1,0 +1,184 @@
+{
+ "description": "Versão leve da forest_edge (mesmas posições, ~metade das árvores): fundo com árvores e custo menor de render no Isaac Sim.",
+ "models": {
+  "oak_tree": "https://fuel.gazebosim.org/1.0/OpenRobotics/models/Oak Tree",
+  "pine_tree": "https://fuel.gazebosim.org/1.0/OpenRobotics/models/Pine Tree"
+ },
+ "trees": [
+  {
+   "name": "tree_00",
+   "model": "oak_tree",
+   "x": 71.84,
+   "y": 23.31,
+   "yaw": -1.322
+  },
+  {
+   "name": "tree_01",
+   "model": "oak_tree",
+   "x": 53.02,
+   "y": -8.8,
+   "yaw": -1.556
+  },
+  {
+   "name": "tree_02",
+   "model": "pine_tree",
+   "x": 67.26,
+   "y": 37.88,
+   "yaw": 1.964
+  },
+  {
+   "name": "tree_03",
+   "model": "oak_tree",
+   "x": 55.11,
+   "y": 33.42,
+   "yaw": 3.119
+  },
+  {
+   "name": "tree_04",
+   "model": "oak_tree",
+   "x": 66.24,
+   "y": 20.85,
+   "yaw": -1.64
+  },
+  {
+   "name": "tree_05",
+   "model": "oak_tree",
+   "x": 59.32,
+   "y": 7.9,
+   "yaw": 0.336
+  },
+  {
+   "name": "tree_06",
+   "model": "pine_tree",
+   "x": 52.37,
+   "y": 19.25,
+   "yaw": -0.206
+  },
+  {
+   "name": "tree_07",
+   "model": "oak_tree",
+   "x": 86.58,
+   "y": -36.43,
+   "yaw": 1.169
+  },
+  {
+   "name": "tree_08",
+   "model": "pine_tree",
+   "x": 61.55,
+   "y": -26.54,
+   "yaw": -1.807
+  },
+  {
+   "name": "tree_09",
+   "model": "oak_tree",
+   "x": 81.3,
+   "y": 25.76,
+   "yaw": -0.605
+  },
+  {
+   "name": "tree_10",
+   "model": "oak_tree",
+   "x": 58.21,
+   "y": -15.56,
+   "yaw": -0.083
+  },
+  {
+   "name": "tree_11",
+   "model": "pine_tree",
+   "x": 80.57,
+   "y": -20.59,
+   "yaw": -1.955
+  },
+  {
+   "name": "tree_12",
+   "model": "pine_tree",
+   "x": 68.06,
+   "y": 29.9,
+   "yaw": 0.494
+  },
+  {
+   "name": "tree_13",
+   "model": "oak_tree",
+   "x": 74.48,
+   "y": 1.42,
+   "yaw": -1.935
+  },
+  {
+   "name": "tree_14",
+   "model": "oak_tree",
+   "x": 52.46,
+   "y": -17.98,
+   "yaw": 2.05
+  },
+  {
+   "name": "tree_15",
+   "model": "oak_tree",
+   "x": 49.57,
+   "y": 25.58,
+   "yaw": 2.12
+  },
+  {
+   "name": "tree_16",
+   "model": "pine_tree",
+   "x": -0.34,
+   "y": 32.62,
+   "yaw": -0.959
+  },
+  {
+   "name": "tree_17",
+   "model": "pine_tree",
+   "x": 33.31,
+   "y": 28.56,
+   "yaw": -1.041
+  },
+  {
+   "name": "tree_18",
+   "model": "oak_tree",
+   "x": 1.25,
+   "y": 39.75,
+   "yaw": -2.189
+  },
+  {
+   "name": "tree_19",
+   "model": "oak_tree",
+   "x": 7.94,
+   "y": -27.87,
+   "yaw": 1.881
+  },
+  {
+   "name": "tree_20",
+   "model": "pine_tree",
+   "x": 43.16,
+   "y": -33.95,
+   "yaw": 2.707
+  },
+  {
+   "name": "tree_21",
+   "model": "oak_tree",
+   "x": 28.54,
+   "y": -27.62,
+   "yaw": -1.652
+  },
+  {
+   "name": "tree_22",
+   "model": "oak_tree",
+   "x": 43.37,
+   "y": -24.95,
+   "yaw": -1.803
+  },
+  {
+   "name": "tree_23",
+   "model": "oak_tree",
+   "x": -19.36,
+   "y": 19.34,
+   "yaw": -0.366
+  },
+  {
+   "name": "tree_24",
+   "model": "oak_tree",
+   "x": -17.84,
+   "y": -0.32,
+   "yaw": -0.587
+  }
+ ]
+}

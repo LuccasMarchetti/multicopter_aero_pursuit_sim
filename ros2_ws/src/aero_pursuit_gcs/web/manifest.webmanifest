@@ -1,0 +1,14 @@
+{
+  "name": "Aero GCS",
+  "short_name": "Aero GCS",
+  "description": "Estações de solo da perseguição aérea na rede (Tailscale / rede local)",
+  "start_url": "/rede",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f1419",
+  "theme_color": "#0f1419",
+  "icons": [
+    {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}

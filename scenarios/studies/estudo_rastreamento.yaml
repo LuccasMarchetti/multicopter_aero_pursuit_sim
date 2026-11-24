@@ -1,0 +1,25 @@
+# Tracker robustness study (docs/estudo_rastreamento/README.md): class-agnostic tracker
+# models x physical-consistency verifier. Reduced round: 1 repetition.
+#   s3_figure8: starts ~19 m away (no depth => APPROACH) and passes the target: the
+#               reported runaway (tracker stays "confirmed" on the background).
+
+# Metrics (session_info.yaml -> CSV): on_target_ratio, mean_iou, false_track_ratio
+# (confirmed but not on the target, also with the target out of view), max_target_distance
+# (runaway), acquisitions, identity_switches.
+name: estudo_rastreamento
+repetitions: 1
+scenarios:
+  - ../tuning/s3_figure8.yaml
+variants:
+  - name: vit
+    parameters: {/vision_tracker_node: {tracker_model: vit, verifier.enabled: false}}
+  - name: vit_verif
+    parameters: {/vision_tracker_node: {tracker_model: vit, verifier.enabled: true}}
+  - name: nano
+    parameters: {/vision_tracker_node: {tracker_model: nano, verifier.enabled: false}}
+  - name: nano_verif
+    parameters: {/vision_tracker_node: {tracker_model: nano, verifier.enabled: true}}
+  - name: dasiamrpn
+    parameters: {/vision_tracker_node: {tracker_model: dasiamrpn, verifier.enabled: false}}
+  - name: dasiamrpn_verif
+    parameters: {/vision_tracker_node: {tracker_model: dasiamrpn, verifier.enabled: true}}

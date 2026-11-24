@@ -1,0 +1,48 @@
+# Single container with everything (Gazebo, PX4 SITL, XRCE, aero_pursuit, GCS). Use it through docker/aero.sh,
+# which fills AERO_UID/AERO_GID/RENDER_GID and picks the GPU; or directly:
+#   docker compose -f docker/compose.yaml up            GCS at http://localhost:8080
+#   docker compose -f docker/compose.yaml run --rm aero build
+#
+# Source code mounted from the host (edits apply without rebuilding the image); the workspace build/, install/ and
+# log/ in their own volumes, so they do not mix with a native build on the host.
+name: aero_pursuit
+
+services:
+  aero:
+    image: aero-pursuit:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        USER_UID: ${AERO_UID:-1000}   # filled by docker/aero.sh (host user, never root)
+        USER_GID: ${AERO_GID:-1000}
+    init: true
+    # DDS (ROS 2), gz-transport and the GCS without port mapping; ipc host: DDS shared-memory
+    # transport between container and host processes.
+    network_mode: host
+    ipc: host
+    devices:
+      - /dev/dri:/dev/dri            # GPU (Mesa: OGRE2 rendering and VA-API)
+    group_add:
+      - "${RENDER_GID:-109}"
+      - "${VIDEO_GID:-44}"
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+      DISPLAY: ${DISPLAY:-}
+      GZ_HEADLESS: ${GZ_HEADLESS:-1}  # 0 + DISPLAY: Gazebo window on the host (X11)
+    volumes:
+      - ..:/home/aero/aero_pursuit
+      - ws_build:/home/aero/aero_pursuit/ros2_ws/build
+      - ws_install:/home/aero/aero_pursuit/ros2_ws/install
+      - ws_log:/home/aero/aero_pursuit/ros2_ws/log
+      - gz_cache:/home/aero/.gz                     # Fuel models (X3, X4...) downloaded once
+      - gcs_config:/home/aero/.config/aero_gcs      # GCS token, settings and certificates
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+    command: gcs
+
+volumes:
+  ws_build:
+  ws_install:
+  ws_log:
+  gz_cache:
+  gcs_config:

@@ -1,0 +1,59 @@
+# Rerun of yaw_camera_speed_pi: runs with the Gazebo gimbal stuck at its stop (31.5 deg up)
+name: yaw_camera_speed_pi_rerun_zigzag
+repetitions: 3
+scenarios:
+- yaw_camera_speed/zigzag.yaml
+common:
+  pursuer:
+    detection: vision
+    acquisition: auto
+    start_after: 0
+  target:
+    max_speed: 12.0
+  parameters:
+    /pursuit_controller_node:
+      max_vel: 12.0
+      mpc.params.ref_horizontal: 1.0
+      mpc.params.N: 50.0
+      mpc.params.dt: 0.05
+      mpc.params.q_px: 10.0
+      mpc.params.q_py: 10.0
+      mpc.params.q_pz: 10.0
+      mpc.params.q_vx: 1.0
+      mpc.params.q_vy: 1.0
+      mpc.params.q_vz: 1.0
+      mpc.params.r_ax: 0.5
+      mpc.params.r_ay: 0.5
+      mpc.params.r_az: 0.5
+      mpc.params.q_f: 5.0
+      mpc.params.a_max_xy: 8.0
+      mpc.params.a_max_z: 4.0
+      mpc.params.q_psi: 5.0
+      mpc.params.r_r: 0.5
+      mpc.params.r_max: 1.2
+    /gimbal:
+      pitch_deg: 0.0
+      max_rate_deg: 90.0
+axes:
+  yaw:
+  - name: pampc
+    parameters:
+      /pursuit_controller_node:
+        mpc.params.yaw_mode: 3.0
+  camera:
+  - name: track
+    parameters:
+      /gimbal:
+        auto_pitch: true
+  speed:
+  - name: v10
+    target_speed: 10.0
+  distance:
+  - name: d7
+    parameters:
+      /pursuit_controller_node:
+        target_distance: 7.0
+  - name: d10
+    parameters:
+      /pursuit_controller_node:
+        target_distance: 10.0

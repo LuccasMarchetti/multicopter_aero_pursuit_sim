@@ -1,0 +1,486 @@
+#!/usr/bin/env bash
+# `aero`: the same commands on every computer that runs a GCS (docs/COMANDOS.md).
+# Each GCS is independent: it drives Gazebo or Isaac Sim on its own computer (Simulation tab).
+# The computer that only accesses the GCSs runs the launcher (launcher/aero_launcher.py).
+#
+#   aero install [--native|--docker]   GCS of this computer + `aero` in ~/.local/bin + autostart.
+#                             native: ROS 2 Jazzy + workspace of this repository (./install.sh);
+#                             docker: image aero-pursuit (Gazebo + GCS), no ROS on the host
+#   aero uninstall            removes the autostart, the menu entry and stops the GCS
+#   aero status               GCS, autostart, simulators available and simulation state
+#   aero view                 opens this GCS in the browser (starts it if needed)
+#   aero gcs start|stop|restart|status|logs|token|access
+#   aero autostart on|off|status    GCS at boot (systemd + linger, or @reboot in crontab)
+#   aero sim gazebo|isaac     simulator of this GCS (the GCS restarts with it)
+#   aero sim start|stop|status      simulation with the form saved in the Simulation tab
+#   aero study <a.yaml> [b.yaml ...] [--repetitions N]   studies in cascade (this simulator)
+#   aero study <a.yaml> ... --sims isaac,gazebo   in the background: each simulator in turn
+#                             (switch, start, run with --tag <sim>, stop); log: aero logs study
+#   aero study status         progress: runs done / total, current run, estimated end
+#   aero study stop           ends the study / campaign (keeps the summary of the runs done)
+#   aero access | token       links and token of this GCS (and the Cloudflare tunnel)
+#   aero logs gcs|sim|world|ros|px4|agent|study    follow a log
+#   aero build [packages]     colcon build (native: ros2_ws; docker: in the container volume)
+#   aero image                docker: rebuild the aero-pursuit image (~30-50 min)
+#   aero update               git pull + submodules, then restarts the GCS
+#   aero isaac setup|build|status|up|down|px4 ...   Isaac Sim on this computer (isaac/host.sh)
+#   aero launcher             launcher page: every GCS this computer sees on the network
+#   aero pursuer <args>       docker/pursuer.sh (pursuer on the Raspberry Pi)
+set -euo pipefail
+
+REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+CONF_DIR="$HOME/.config/aero"
+CONF="$CONF_DIR/aero.env"            # AERO_MODE, ROS_DOMAIN_ID (written by aero install)
+GCS_CONFIG="${AERO_GCS_CONFIG:-$HOME/.config/aero_gcs}"
+export AERO_ISAAC_STATE="${AERO_ISAAC_STATE:-$HOME/.local/state/aero/isaac}"
+UNIT=aero-gcs.service
+CONTAINER=aero-gcs
+CRON_TAG="# aero gcs autostart"
+# shellcheck disable=SC1090
+[ -f "$CONF" ] && source "$CONF"
+MODE="${AERO_MODE:-}"
+[ -n "${ROS_DOMAIN_ID:-}" ] && export ROS_DOMAIN_ID
+
+# Help: the comment block at the top of this file, without the leading '# '.
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit "${1:-0}"; }
+die() { echo "$*" >&2; exit 1; }
+need_mode() { [ -n "$MODE" ] || die "no GCS installed on this computer: aero install"; }
+setting() {  # value of the GCS settings.json (or the default)
+  python3 -c 'import json,sys
+try: print(json.load(open(sys.argv[1])).get(sys.argv[2], sys.argv[3]))
+except Exception: print(sys.argv[3])' "$GCS_CONFIG/settings.json" "$1" "$2"
+}
+PORT="${GCS_PORT:-$(setting http_port 8080)}"
+gcs_up() { curl -s -o /dev/null --max-time 1 "http://localhost:$PORT/api/info"; }
+info() { curl -s --max-time 2 "http://localhost:$PORT/api/info"; }
+
+# --- environment detection -------------------------------------------------------------
+native_ok() { [ -f "/opt/ros/${ROS_DISTRO:-jazzy}/setup.bash" ]; }
+rtx_gpu() { command -v nvidia-smi >/dev/null && nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | grep -qi rtx; }
+isaac_installed() { [ -x "${ISAACSIM_PATH:-$HOME/isaacsim51}/python.sh" ] && [ -f "$HOME/isaac_env.sh" ]; }
+
+# --- GCS process ---------------------------------------------------------------------------
+gcs_start() {
+  need_mode
+  gcs_up && return 0
+  if [ "$MODE" = docker ]; then
+    if isaac_installed; then bash "$REPO/isaac/host.sh" agent start >/dev/null; fi
+    AERO_GCS_CONFIG="$GCS_CONFIG" AERO_GCS_NAME="${AERO_GCS_NAME:-$(hostname)}" "$REPO/docker/aero.sh" up >/dev/null
+  else
+    GCS_NO_BROWSER=1 "$REPO/ros2_ws/gcs.sh" open >/dev/null
+  fi
+  # First start in docker compiles the workspace in the volume (several minutes).
+  local wait=60; [ "$MODE" = docker ] && wait=1800
+  for i in $(seq "$wait"); do
+    gcs_up && return 0
+    [ "$i" = 30 ] && [ "$MODE" = docker ] && echo "waiting for the GCS (the first time it builds the workspace; aero gcs logs)..." >&2
+    sleep 1
+  done
+  die "the GCS did not answer at localhost:$PORT (aero gcs logs)"
+}
+
+gcs_stop() {
+  need_mode
+  if [ "$MODE" = docker ]; then
+    "$REPO/docker/aero.sh" stop >/dev/null 2>&1 || true
+    bash "$REPO/isaac/host.sh" agent stop >/dev/null 2>&1 || true
+  else
+    "$REPO/ros2_ws/gcs.sh" stop >/dev/null
+  fi
+  echo "GCS stopped"
+}
+
+gcs_state() {
+  if [ "$MODE" = docker ]; then
+    local c; c=$(docker ps --filter "name=^$CONTAINER\$" --format '{{.Status}}' 2>/dev/null)
+    echo "container $CONTAINER: ${c:-stopped}"
+  elif systemctl --user cat "$UNIT" >/dev/null 2>&1; then
+    echo "service $UNIT: $(systemctl --user is-active "$UNIT" 2>/dev/null || true)"
+  else
+    echo "process: $(pgrep -f 'python3 -m [a]ero_pursuit_gcs' >/dev/null && echo running || echo stopped)"
+  fi
+}
+
+# One request to the local GCS (localhost needs no token): op + JSON arguments. In docker mode
+# it runs in the container (aiohttp is there, not necessarily on the host).
+gcs_req() {
+  local py=(python3)
+  [ "$MODE" = docker ] && py=(docker exec -i "$CONTAINER" python3)
+  "${py[@]}" - "$PORT" "$@" <<'PY'
+import asyncio, json, sys
+import aiohttp
+port, op, args = sys.argv[1], sys.argv[2], json.loads(sys.argv[3] if len(sys.argv) > 3 else '{}')
+async def main():
+    async with aiohttp.ClientSession() as s:
+        async with s.ws_connect(f'http://localhost:{port}/ws/ctl') as ws:
+            await ws.send_json({'op': op, 'id': 1, **args})
+            async for m in ws:
+                d = json.loads(m.data)
+                if d.get('id') == 1:
+                    if not d.get('ok'):
+                        sys.exit(f"erro: {d.get('error')}")
+                    print(json.dumps(d.get('data'), ensure_ascii=False))
+                    return
+try:
+    asyncio.run(main())
+except aiohttp.ClientError as e:
+    sys.exit(f'GCS fora do ar em localhost:{port} ({e})')
+PY
+}
+
+# --- autostart -----------------------------------------------------------------------------
+linger() { [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" = yes ]; }
+cron_line() { echo "@reboot sleep 45 && $REPO/aero gcs start > $AERO_ISAAC_STATE/../gcs_autostart.log 2>&1 $CRON_TAG"; }
+cron_set() {  # on|off
+  local current; current=$(crontab -l 2>/dev/null | grep -vF "$CRON_TAG" | grep -vF '# aero-isaac-gcs autostart' || true)
+  if [ "$1" = on ]; then printf '%s\n%s\n' "$current" "$(cron_line)" | sed '/^$/d' | crontab -
+  else printf '%s\n' "$current" | sed '/^$/d' | crontab -; fi
+}
+autostart_status() {
+  if crontab -l 2>/dev/null | grep -qF "$CRON_TAG"; then
+    echo "autostart: on (@reboot in crontab, ~45 s after boot)"
+  elif [ "$(systemctl --user is-enabled "$UNIT" 2>/dev/null)" = enabled ]; then
+    if linger; then echo "autostart: on (systemd service, starts at boot without login)"
+    else echo "autostart: at login only (linger off)"; fi
+  else
+    echo "autostart: off"
+  fi
+}
+autostart_on() {
+  need_mode
+  # native with systemd linger (or able to enable it): the service; otherwise @reboot in crontab
+  # (shared computers without root: Docker starts at boot, the cron line starts the GCS).
+  if [ "$MODE" = native ] && { linger || loginctl enable-linger "$USER" 2>/dev/null; }; then
+    systemctl --user cat "$UNIT" >/dev/null 2>&1 || "$REPO/ros2_ws/gcs.sh" install-service >/dev/null
+    systemctl --user enable "$UNIT" >/dev/null 2>&1
+    cron_set off
+  else
+    systemctl --user disable "$UNIT" >/dev/null 2>&1 || true
+    mkdir -p "$AERO_ISAAC_STATE"
+    cron_set on
+  fi
+  autostart_status
+}
+autostart_off() {
+  systemctl --user disable "$UNIT" >/dev/null 2>&1 || true
+  cron_set off
+  autostart_status
+}
+
+# --- install -------------------------------------------------------------------------------
+install() {
+  local mode="${1:-}"
+  case "$mode" in --native) mode=native ;; --docker) mode=docker ;; "") ;; *) usage 1 ;; esac
+  if [ -z "$mode" ]; then
+    if native_ok && [ -f "$REPO/ros2_ws/install/setup.bash" ]; then mode=native; else mode=docker; fi
+  fi
+  [ -f "$REPO/ros2_ws/src/px4_msgs/package.xml" ] || git -C "$REPO" submodule update --init --recursive
+  mkdir -p "$CONF_DIR" "$HOME/.local/bin"
+  {
+    echo "AERO_MODE=$mode"
+    # Same default on every install; a shared computer can pick its own: ROS_DOMAIN_ID=N aero install
+    [ -n "${ROS_DOMAIN_ID:-}" ] && echo "ROS_DOMAIN_ID=$ROS_DOMAIN_ID"
+  } > "$CONF"
+  # shellcheck disable=SC1090
+  source "$CONF"; MODE=$mode; export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-}"
+  ln -sf "$REPO/aero" "$HOME/.local/bin/aero"
+  grep -qs 'HOME/.local/bin' "$HOME/.profile" "$HOME/.bashrc" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+  if [ "$mode" = native ]; then
+    [ -f "$REPO/ros2_ws/install/setup.bash" ] || echo "warning: workspace not built; run ./install.sh" >&2
+    "$REPO/ros2_ws/gcs.sh" install-service >/dev/null
+  else
+    # docker/aero.sh image also installs Docker (asks for sudo) when it is missing.
+    docker image inspect aero-pursuit:latest >/dev/null 2>&1 || {
+      echo "== imagem aero-pursuit (Gazebo + GCS): primeira vez, ~30-50 min"; "$REPO/docker/aero.sh" image; }
+  fi
+  mkdir -p "$HOME/.local/share/applications"
+  printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=Aero GCS' 'Comment=aero_pursuit ground station' \
+    "Exec=$REPO/aero view" 'Icon=applications-science' 'Terminal=false' 'Categories=Science;Development;' \
+    > "$HOME/.local/share/applications/aero-gcs.desktop"
+  echo "GCS installed ($mode mode). Command: ~/.local/bin/aero"
+  autostart_on
+  gcs_start && echo "GCS up: http://localhost:$PORT/ (aero access for the network links)"
+  if rtx_gpu; then
+    if ! isaac_installed; then echo "RTX GPU found: for Isaac Sim, aero isaac setup"; fi
+  fi
+}
+
+uninstall() {
+  autostart_off >/dev/null
+  [ -n "$MODE" ] && gcs_stop || true
+  [ "$MODE" = native ] && "$REPO/ros2_ws/gcs.sh" uninstall-service >/dev/null 2>&1 || true
+  rm -f "$HOME/.local/share/applications/aero-gcs.desktop" "$CONF"
+  echo "removed (the ~/.local/bin/aero command and the GCS settings in $GCS_CONFIG stay)"
+}
+
+status() {
+  echo "mode:      ${MODE:-not installed} | $(gcs_state)"
+  if gcs_up; then echo "GCS:       up at http://localhost:$PORT/"; else echo "GCS:       down (aero gcs start)"; fi
+  autostart_status
+  if gcs_up; then
+    info | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+av = ", ".join(("%s %s" % (k, "ok" if v else "unavailable")) for k, v in d.get("available", {}).items())
+busy = " | " + d["busy"] if d.get("busy") else ""
+print("simulator: %s (%s)" % (d["simulator"], av))
+print("simulation: %s | RTF: %s%s" % ("running" if d["running"] else "stopped", d.get("rtf") or "—", busy))'
+  fi
+}
+
+study_status() {
+  local f="$REPO/datasets/study_progress.json" sims="$REPO/datasets/study_sims.json"
+  if [ ! -f "$f" ]; then
+    if [ -f "$sims" ]; then
+      python3 -c 'import json, sys; s = json.load(open(sys.argv[1])); print("simulators: %s, now %s (%s): no run yet" % (" -> ".join(s["sims"]), s.get("current"), s.get("state")))' "$sims"
+    else
+      echo "no study has run here yet"
+    fi
+    return 0
+  fi
+  python3 - "$f" "$REPO/datasets/study_sims.json" <<'PY'
+import json, sys, os, time
+d = json.load(open(sys.argv[1]))
+def hms(s):
+    s = int(s or 0); return f"{s // 3600}h{s // 60 % 60:02d}m"
+print(f"{d.get('state')}  {d.get('tag') or ''}  study {d.get('study', '?')}")
+print(f"  runs: {d['done']}/{d['total']} done ({d['percent']} %), {d['total'] - d['done']} left")
+end = time.strftime('%H:%M', time.localtime(os.path.getmtime(sys.argv[1]) + d['eta_s'])) if d.get('eta_s') and d.get('state') == 'running' else ''
+print(f"  elapsed {hms(d.get('elapsed_s'))}" + (f", ETA {hms(d['eta_s'])} (ends about {end} local time)" if end else ''))
+if d.get('state') == 'running':
+    print(f"  now: combination {d.get('combination')} {d.get('scenario')} / {d.get('variant')}, run {d.get('run')} ({d.get('phase')}: {d.get('message')})")
+age = time.time() - os.path.getmtime(sys.argv[1])
+if d.get('state') == 'running' and age > 300:
+    print(f"  (no update for {int(age // 60)} min: is it still running? aero logs study)")
+if os.path.exists(sys.argv[2]):
+    s = json.load(open(sys.argv[2]))
+    print(f"simulators: {' -> '.join(s['sims'])}, now {s.get('current')} ({s.get('state')})")
+PY
+}
+
+# aero study <files> --sims isaac,gazebo [run_study options]: one batch per simulator, detached.
+study_sims() {
+  local sims="" args=()
+  while [ $# -gt 0 ]; do
+    if [ "$1" = --sims ]; then sims="$2"; shift 2; else args+=("$1"); shift; fi
+  done
+  [ -n "$sims" ] || { echo "--sims isaac,gazebo" >&2; exit 2; }
+  mkdir -p "$REPO/datasets"
+  local log="$REPO/datasets/study.log"
+  nohup "$0" _study_sims "$sims" "${args[@]}" > "$log" 2>&1 < /dev/null &
+  echo "started in the background (pid $!): ${sims//,/ then }"
+  echo "  progress: aero study status    log: aero logs study"
+}
+
+_study_sims() {
+  local sims="$1"; shift
+  local state="$REPO/datasets/study_sims.json" list=() sim
+  IFS=',' read -r -a list <<< "$sims"
+  local json; json=$(printf '"%s",' "${list[@]}"); json="[${json%,}]"
+  for sim in "${list[@]}"; do
+    echo "######## $sim ($(date '+%F %T'))"
+    rm -f "$REPO/datasets/study_progress.json"     # the previous study's progress is not this one's
+    printf '{"sims": %s, "current": "%s", "state": "starting", "pid": %d}\n' "$json" "$sim" $$ > "$state"
+    "$0" sim stop >/dev/null 2>&1 || true
+    if ! "$0" sim "$sim"; then
+      echo "!!! could not switch to $sim: skipped"
+      continue
+    fi
+    if [ "$sim" = isaac ]; then
+      # Isaac is started by the GCS; run_study.py starts Gazebo by itself (headless).
+      "$0" sim start
+      for _ in $(seq 120); do "$0" sim status | grep -q "RTF: [0-9]" && break; sleep 5; done
+    fi
+    printf '{"sims": %s, "current": "%s", "state": "running", "pid": %d}\n' "$json" "$sim" $$ > "$state"
+    "$0" study "$@" --tag "$sim" || echo "!!! study on $sim ended with an error"
+    "$0" sim stop >/dev/null 2>&1 || true
+  done
+  printf '{"sims": %s, "current": "%s", "state": "finished"}\n' "$json" "${list[-1]}" > "$state"
+  echo "######## done ($(date '+%F %T'))"
+}
+
+# aero study stop: ends a study (and a --sims campaign: no further simulator), keeping the
+# summary of the runs done, then stops the simulation.
+study_stop() {
+  local state="$REPO/datasets/study_sims.json" pid=""
+  [ -f "$state" ] && pid=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("pid", ""))' "$state" 2>/dev/null)
+  [ -n "$pid" ] || pid=$(pgrep -f "aero _study_sims" | head -1)   # campaigns started before the pid was kept
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && grep -q _study_sims "/proc/$pid/cmdline" 2>/dev/null; then
+    kill "$pid" && echo "campaign stopped (pid $pid): no further simulator"
+    python3 - "$state" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1])); s["state"] = "stopped"; json.dump(s, open(sys.argv[1], "w"))
+PY
+  fi
+  # SIGINT: run_study.py writes summary.csv of the runs done and marks the study interrupted.
+  if [ "$MODE" = docker ]; then
+    docker exec "$CONTAINER" pkill -INT -f "ros2_ws/run_study.py" 2>/dev/null
+  else
+    pkill -INT -f "ros2_ws/run_study.py" 2>/dev/null
+  fi && echo "study interrupted (summary of the runs done is kept)" || echo "no study running"
+  for _ in $(seq 60); do
+    if [ "$MODE" = docker ]; then docker exec "$CONTAINER" pgrep -f "ros2_ws/run_study.py" >/dev/null 2>&1 || break
+    else pgrep -f "ros2_ws/run_study.py" >/dev/null || break; fi
+    sleep 1
+  done
+  sim stop
+}
+
+sim() {
+  local sub="${1:-status}"
+  case "$sub" in
+    gazebo|isaac)
+      gcs_start
+      # A stop still in progress (Gazebo on the CPU takes a while) would refuse the switch.
+      for _ in $(seq 90); do info | grep -qE '"running": true|"busy": "stop"' || break; sleep 1; done
+      out=$(gcs_req sim.backend "{\"backend\": \"$sub\"}")
+      if [[ "$out" == *'"restart": true'* ]]; then
+        echo "GCS restarting with $sub..."; sleep 3
+        # The docker-mode GCS recreates its container: it can take well over 30 s.
+        for _ in $(seq 180); do info 2>/dev/null | grep -q "\"backend\": \"$sub\"" && break; sleep 1; done
+      fi
+      info 2>/dev/null | python3 -c 'import json,sys; print("simulator:", json.load(sys.stdin)["simulator"])' \
+        || { echo "the GCS did not come back with $sub" >&2; return 1; }
+      ;;
+    start)
+      gcs_start
+      # A stop still in progress would refuse the start: wait for it (up to 90 s).
+      for _ in $(seq 90); do info | grep -q '"busy": "stop"' || break; sleep 1; done
+      gcs_req sim.start '{"cfg": {}}' >/dev/null && echo "starting (follow it: aero sim status)" ;;
+    stop)
+      gcs_start
+      gcs_req sim.stop >/dev/null || true
+      # Returns when it is really stopped, so a `start` right after works (up to 90 s).
+      for _ in $(seq 90); do info | grep -qE '"running": true|"busy": "stop"' || break; sleep 1; done
+      echo "stopped" ;;
+    status)
+      gcs_start
+      info | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+busy = " | " + d["busy"] if d.get("busy") else ""
+print("simulator: %s | running: %s | RTF: %s%s" % (d["simulator"], "yes" if d["running"] else "no", d.get("rtf") or "—", busy))'
+      ;;
+    *) usage 1 ;;
+  esac
+}
+
+access() {
+  local tok https ip
+  tok=$(setting token "")
+  https=$(setting https_port 8443)
+  echo "This GCS ($(hostname))"
+  echo "  local:   http://localhost:$PORT/"
+  for ip in $(hostname -I 2>/dev/null); do
+    case "$ip" in 172.17.*|172.18.*|*:*) continue ;; esac
+    echo "  network: https://$ip:$https/?token=$tok"
+  done
+  t=$(info 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tunnel") or "")' 2>/dev/null || true)
+  [ -n "$t" ] && echo "  tunnel:  $t/?token=$tok (active)"
+  echo "  token:   $tok"
+}
+
+logs() {
+  case "${1:-gcs}" in
+    gcs)
+      if [ "$MODE" = docker ]; then docker logs -f --tail 50 "$CONTAINER"
+      elif systemctl --user cat "$UNIT" >/dev/null 2>&1; then journalctl --user -u "$UNIT" -f
+      else tail -n 50 -f "$HOME/.cache/aero_gcs/gcs.log"; fi ;;
+    sim)   tail -n 50 -F "$REPO/logs/latest/aero_pursuit.log" ;;
+    world) tail -n 50 -F "$AERO_ISAAC_STATE/logs/world.log" ;;
+    px4)   tail -n 200 -F "$AERO_ISAAC_STATE/logs/world.log" | grep -a --line-buffered -E '^(INFO|WARN|ERROR) ' ;;
+    ros)   tail -n 50 -F "$AERO_ISAAC_STATE/logs/ros.log" ;;
+    agent) tail -n 50 -F "$AERO_ISAAC_STATE/logs/host_agent.log" ;;
+    study) tail -n 30 -F "$REPO/datasets/study.log" ;;
+    *) usage 1 ;;
+  esac
+}
+
+isaac() {
+  local sub="${1:-status}"; shift || true
+  case "$sub" in
+    setup) exec bash "$REPO/isaac/setup_host.sh" "$@" ;;
+    # The ROS side of Isaac runs from the workspace: same build as Gazebo.
+    build) echo "aero isaac build = aero build (the ROS side of Isaac runs from the workspace)"; exec "$0" build "$@" ;;
+    status|up|down|world|ros|px4) exec bash "$REPO/isaac/host.sh" "$sub" "$@" ;;
+    *) usage 1 ;;
+  esac
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  install) install "$@" ;;
+  uninstall) uninstall ;;
+  status) status ;;
+  view)
+    gcs_start
+    xdg-open "http://localhost:$PORT/app" >/dev/null 2>&1 &
+    ;;
+  gcs)
+    case "${1:-status}" in
+      start) gcs_start && echo "GCS up: http://localhost:$PORT/" ;;
+      stop) gcs_stop ;;
+      restart)
+        need_mode
+        if [ "$MODE" = native ]; then "$REPO/ros2_ws/gcs.sh" restart >/dev/null
+        else gcs_stop >/dev/null; fi
+        gcs_start && echo "GCS restarted" ;;
+      status) need_mode; gcs_state; gcs_up && echo "answering at http://localhost:$PORT/" || echo "not answering" ;;
+      logs) need_mode; logs gcs ;;
+      token) setting token "(no token yet: start the GCS)" ;;
+      access) access ;;   # same as `aero access`
+      *) echo "aero gcs: unknown subcommand '${1}' (start|stop|restart|status|logs|token|access)" >&2
+         exit 1 ;;
+    esac
+    ;;
+  autostart)
+    case "${1:-status}" in
+      on) autostart_on ;; off) autostart_off ;; *) autostart_status ;;
+    esac
+    ;;
+  sim) need_mode; sim "$@" ;;
+  _study_sims) need_mode; _study_sims "$@" ;;
+  study)
+    need_mode
+    if [ "${1:-}" = status ]; then study_status; exit 0; fi
+    if [ "${1:-}" = stop ]; then study_stop; exit 0; fi
+    for a in "$@"; do [ "$a" = --sims ] && { study_sims "$@"; exit 0; }; done
+    # Same environment as the GCS: with Isaac, its DDS domain/profile and --external-sim (the
+    # simulation is the one the GCS started; run_study.py cannot start Isaac by itself).
+    gcs_start
+    env=(); extra=()
+    if info | grep -q '"backend": "isaac"'; then
+      env=(ROS_DOMAIN_ID=42); extra=(--external-sim)
+      prof="$REPO/isaac/fastdds_shm.xml"; [ "$MODE" = docker ] && prof=/home/aero/aero_pursuit/isaac/fastdds_shm.xml
+      env+=(FASTRTPS_DEFAULT_PROFILES_FILE="$prof")
+    fi
+    if [ "$MODE" = docker ]; then
+      tty=(-i); [ -t 0 ] && tty=(-it)
+      exec docker exec "${tty[@]}" -w /home/aero/aero_pursuit "${env[@]/#/--env=}" "$CONTAINER" \
+        /usr/local/bin/aero python3 ros2_ws/run_study.py "$@" "${extra[@]}"
+    fi
+    # shellcheck disable=SC1090,SC1091
+    set +u; source "/opt/ros/${ROS_DISTRO:-jazzy}/setup.bash"; source "$REPO/ros2_ws/install/setup.bash"; set -u
+    cd "$REPO" && exec env "${env[@]}" python3 ros2_ws/run_study.py "$@" "${extra[@]}" ;;
+  access) access ;;
+  token) setting token "" ;;
+  logs) need_mode; logs "$@" ;;
+  build)
+    need_mode
+    if [ "$MODE" = docker ]; then exec "$REPO/docker/aero.sh" build "$@"; fi
+    # shellcheck disable=SC1090
+    set +u; source "/opt/ros/${ROS_DISTRO:-jazzy}/setup.bash"; set -u
+    cd "$REPO/ros2_ws" && exec colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release ${1:+--packages-select "$@"} ;;
+  image) exec "$REPO/docker/aero.sh" image "$@" ;;
+  update)
+    git -C "$REPO" pull --ff-only
+    git -C "$REPO" submodule update --init --recursive
+    if [ -n "$MODE" ] && gcs_up; then "$0" gcs restart; fi
+    echo "updated. C++/ROS changed? aero build (for Gazebo and Isaac)"
+    ;;
+  isaac) isaac "$@" ;;
+  launcher) exec python3 "$REPO/launcher/aero_launcher.py" "$@" ;;
+  pursuer) exec "$REPO/docker/pursuer.sh" "$@" ;;
+  ""|-h|--help|help) usage ;;
+  *) usage 1 ;;
+esac

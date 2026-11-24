@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Aero GCS</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='%234fc3f7'/></svg>">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0f1419">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="stylesheet" href="/css/app.css">
+  <script type="importmap">{"imports": {"three": "/vendor/three.module.js", "three/addons/": "/vendor/"}}</script>
+</head>
+<body>
+  <header id="top">
+    <span class="brand">Aero GCS</span>
+    <a class="dir-link" href="/rede" title="Other GCSs on the network (Tailscale / LAN)">GCSs ↗</a>
+    <div id="badges"></div>
+    <div id="layout-menu" class="menu">
+      <button id="layout-btn" class="small" title="Window layout: drag by the bar, resize by the edges, double click maximizes">Layout ▾</button>
+      <div id="layout-pop" class="menu-pop" hidden></div>
+    </div>
+    <button id="toggle-side" class="small" title="Show/hide the side panel">☰</button>
+  </header>
+  <main id="main">
+    <section id="views">
+      <div id="video-pane" class="pane">
+        <div class="pane-bar">
+          <span>Camera</span>
+          <span class="spacer"></span>
+          <button id="video-stop" class="small" title="Stop tracking (Esc / right button)">Stop target</button>
+          <button id="video-full" class="small" title="Full screen">⛶</button>
+        </div>
+        <div id="video-wrap">
+          <canvas id="video"></canvas>
+          <canvas id="overlay"></canvas>
+          <div id="video-msg"></div>
+        </div>
+      </div>
+      <div id="splitter"></div>
+      <div id="scene-pane" class="pane">
+        <div class="pane-bar">
+          <span id="view-switch"><button class="small active" data-view="3d">3D</button><button class="small" data-view="gazebo" title="Gazebo free camera">Gazebo</button><button class="small" data-view="plot">Plots</button></span>
+          <span class="spacer"></span>
+          <select id="follow" class="small"></select>
+          <label class="mini"><input type="checkbox" id="trails" checked> trails</label>
+          <label class="mini"><input type="checkbox" id="frames"> TFs</label>
+          <button id="clear-trails" class="small">clear</button>
+        </div>
+        <div id="scene"></div>
+        <div id="spectator" style="display:none"></div>
+        <div id="plot" style="display:none"></div>
+      </div>
+    </section>
+    <aside id="side" class="pane">
+      <div class="pane-bar" id="side-bar"><span>Panel</span><span class="spacer"></span><span class="mini muted">⧉ on a tab = own window</span></div>
+      <nav id="tabs"></nav>
+      <div id="panels"></div>
+    </aside>
+  </main>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+# The figure 8 of figure8.yaml (25 x 12.5 m, 120 m lap) tilted 30 deg about its length (roll) and 30 deg about its
+# width (pitch): one lobe high, the other low. Crossing point 10 m ahead of the pursuer,
+# where the target starts, moving sideways and climbing; 20 m high so the low lobe stays 5.5 m up
+# (the doubled 8 spans 29 m in height when tilted).
+name: figure8_tilted
+description: Figure 8 (120 m) tilted 30 deg in roll and 30 deg in pitch, crossing point 10 m ahead of the pursuer
+duration: 0                  # until the lap is complete
+target:
+  start: [10, 0, 20]
+  path:
+  - trajectory: eight
+    loops: 1
+pursuer:
+  start: [0, 0, 20]
+  detection: vision
+  acquisition: auto
+  start_after: 0
+trajectories:
+  eight:
+    type: figure8
+    center: [10, 0, 20]
+    size: [25, 12.5, 2]
+    heading_deg: 90
+    roll_deg: 30
+    pitch_deg: 30
+    speed: 2.5

@@ -1,0 +1,28 @@
+# Test battery: 2 scenarios x 3 yaw modes x 2 target speeds x 2 pursuer speeds, 3 repetitions each
+# (2 x 12 combinations x 3 = 72 runs, ~1 min each). Run with:
+#     aero study scenarios/studies/battery_example.yaml
+# Analyze with:
+#     ros2 run aero_pursuit analyze_study.py datasets/studies/battery_example_<date>
+name: battery_example
+repetitions: 3
+scenarios: [../tuning/s2_line.yaml, ../tuning/s3_figure8.yaml]
+
+common:                       # merged into every run
+  duration: 40                # [s] of pursuit per run
+  pursuer:
+    detection: omniscient     # exact target position (control only); 'vision' to include the tracker
+  parameters:                 # fixed for every run (the live GCS values would leak into the study)
+    /pursuit_controller_node: {target_distance: 5.0, max_vel: 3.0, mpc.params.ref_horizontal: 1.0}
+    /scenario_runner: {target_speed: 0.0}   # the scenario/axis target_speed decides
+
+axes:                         # every combination of one item per axis; run name = item names joined
+  yaw:                        # control technique (MPC heading mode, mpc.params.yaw_mode)
+    - {name: hold, parameters: {/pursuit_controller_node: {mpc.params.yaw_mode: 0.0}}}
+    - {name: B,    parameters: {/pursuit_controller_node: {mpc.params.yaw_mode: 1.0}}}
+    - {name: opt,  parameters: {/pursuit_controller_node: {mpc.params.yaw_mode: 3.0}}}
+  target:                     # pursued drone speed along its plan [m/s]
+    - {name: t1, target_speed: 1.0}
+    - {name: t3, target_speed: 3.0}
+  pursuer:                    # pursuer limits: velocity (node safety limit) and MPC acceleration
+    - {name: p2, parameters: {/pursuit_controller_node: {max_vel: 2.0, mpc.params.a_max_xy: 2.0}}}
+    - {name: p4, parameters: {/pursuit_controller_node: {max_vel: 4.0, mpc.params.a_max_xy: 3.0}}}

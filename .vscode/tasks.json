@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "colcon: build RelWithDebInfo",
+      "type": "shell",
+      "command": "source /opt/ros/jazzy/setup.bash && colcon build --packages-select aero_pursuit --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo",
+      "options": {"cwd": "${workspaceFolder}/ros2_ws", "shell": {"executable": "/bin/bash", "args": ["-c"]}},
+      "group": "build",
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "colcon: build Release",
+      "type": "shell",
+      "command": "source /opt/ros/jazzy/setup.bash && colcon build --packages-select aero_pursuit --cmake-args -DCMAKE_BUILD_TYPE=Release",
+      "options": {"cwd": "${workspaceFolder}/ros2_ws", "shell": {"executable": "/bin/bash", "args": ["-c"]}},
+      "group": {"kind": "build", "isDefault": true},
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "colcon: test",
+      "type": "shell",
+      "command": "source /opt/ros/jazzy/setup.bash && colcon test --packages-select aero_pursuit && colcon test-result --verbose",
+      "options": {"cwd": "${workspaceFolder}/ros2_ws", "shell": {"executable": "/bin/bash", "args": ["-c"]}},
+      "group": "test",
+      "problemMatcher": []
+    }
+  ]
+}

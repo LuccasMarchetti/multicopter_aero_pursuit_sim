@@ -1,0 +1,20 @@
+# Your scenarios/circle.yaml, radius 10 -> 10.35 m so a lap is 65 m, flown twice (130 m: one lap
+# alone is 6.5 s at 10 m/s); the run ends when the second lap is complete.
+name: circle
+description: Circle of radius 10.35 m (65 m lap), two laps, at 12 m (as the pursuer), starting 7 m ahead of the pursuer
+duration: 0                  # until the lap is complete
+target:
+  start: [7, 0, 12]
+  path:
+  - trajectory:
+      type: circle
+      center: [17.35, 0, 12]
+      radius: 10.35
+      speed: 2.5
+      phase_deg: 180
+    loops: 2
+pursuer:
+  start: [0, 0, 12]
+  detection: vision
+  acquisition: auto
+  start_after: 0

@@ -1,0 +1,57 @@
+# yaw_camera_speed_pi with omniscient detection (the estimator gets the exact relative position from
+# the simulator): the control reference for the vision runs. Same PAMPC + gimbal tracking, every
+# speed and distance, 3 runs each: 6 x 3 x 2 x 3 = 108 runs. Pursuer local (Gazebo, PX4 and nodes on
+# one PC; no pursuer container on the LAN, or there would be two controllers).
+#
+#   SKIP_PX4_BUILD=1 ./ros2_ws/run_study.py scenarios/studies/yaw_camera_speed_omni.yaml --tag omni
+name: yaw_camera_speed_omni
+repetitions: 3
+scenarios:                            # one lap each (yaw_camera_speed/*.yaml)
+  - yaw_camera_speed/circle.yaml
+  - yaw_camera_speed/helix.yaml
+  - yaw_camera_speed/zigzag.yaml
+  - yaw_camera_speed/figure8.yaml
+  - yaw_camera_speed/figure8_tilted.yaml
+  - yaw_camera_speed/lissajous3d.yaml
+
+# Fixed in every run (the GCS remembers values changed by hand: everything compared is set here).
+common:
+  pursuer: {detection: omniscient, start_after: 0}   # exact relative position; chase from the first instant
+  target: {max_speed: 12.0}           # executor cap (default 6 m/s); the X4 itself: 10 m/s, 8 m/s²
+  parameters:
+    /pursuit_controller_node:
+      max_vel: 12.0                   # pursuer speed limit [m/s] (PX4 MPC_XY_VEL_MAX = 12)
+      mpc.params.ref_horizontal: 1.0  # planar standoff: same altitude as the target
+      mpc.params.N: 50.0              # 2.5 s horizon
+      mpc.params.dt: 0.05
+      mpc.params.q_px: 10.0
+      mpc.params.q_py: 10.0
+      mpc.params.q_pz: 10.0
+      mpc.params.q_vx: 1.0
+      mpc.params.q_vy: 1.0
+      mpc.params.q_vz: 1.0
+      mpc.params.r_ax: 0.5
+      mpc.params.r_ay: 0.5
+      mpc.params.r_az: 0.5
+      mpc.params.q_f: 5.0
+      mpc.params.a_max_xy: 8.0
+      mpc.params.a_max_z: 4.0
+      mpc.params.q_psi: 5.0
+      mpc.params.r_r: 0.5
+      mpc.params.r_max: 1.2
+    /gimbal:
+      pitch_deg: 0.0
+      max_rate_deg: 90.0
+
+axes:
+  yaw:
+    - {name: pampc, parameters: {/pursuit_controller_node: {mpc.params.yaw_mode: 3.0}}}
+  camera:
+    - {name: track, parameters: {/gimbal: {auto_pitch: true}}}
+  speed:
+    - {name: v3, target_speed: 3.0}
+    - {name: v6_5, target_speed: 6.5}
+    - {name: v10, target_speed: 10.0}
+  distance:
+    - {name: d7, parameters: {/pursuit_controller_node: {target_distance: 7.0}}}
+    - {name: d10, parameters: {/pursuit_controller_node: {target_distance: 10.0}}}

@@ -1,0 +1,39 @@
+# Model TFs directly from Gazebo (replaces gazebo_tf_bridge_node).
+#
+# The gz::sim::systems::PosePublisher system is attached at runtime to each
+# model by the gz_pose_tf.sh script (service /world/<w>/entity/system/add), and
+# publishes gz.msgs.Pose_V on /world/<w>/model/<model>/pose with the header
+#   frame_id = "<world>",  child_frame_id = "<model>",  stamp = simulation time.
+# ros_gz_bridge converts Pose_V -> tf2_msgs/TFMessage natively (one entry
+# per model, all publishing on /tf). The rate is the plugin's update_frequency.
+# The models here must match GZ_TF_MODELS in gz_pose_tf.sh.
+
+- ros_topic_name: "/tf"
+  gz_topic_name: "/world/lawn/model/x500_depth_0/pose"
+  ros_type_name: "tf2_msgs/msg/TFMessage"
+  gz_type_name: "gz.msgs.Pose_V"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/tf"
+  gz_topic_name: "/world/lawn/model/X3/pose"
+  ros_type_name: "tf2_msgs/msg/TFMessage"
+  gz_type_name: "gz.msgs.Pose_V"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/tf"
+  gz_topic_name: "/world/lawn/model/X4/pose"
+  ros_type_name: "tf2_msgs/msg/TFMessage"
+  gz_type_name: "gz.msgs.Pose_V"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/tf"
+  gz_topic_name: "/world/lawn/model/Tiltrotor/pose"
+  ros_type_name: "tf2_msgs/msg/TFMessage"
+  gz_type_name: "gz.msgs.Pose_V"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/tf"
+  gz_topic_name: "/world/lawn/model/X5/pose"
+  ros_type_name: "tf2_msgs/msg/TFMessage"
+  gz_type_name: "gz.msgs.Pose_V"
+  direction: GZ_TO_ROS

@@ -1,0 +1,2 @@
+custo médio por avaliação: 150.7 ns (sink -5.6e+04)
+a 250 Hz × 10 veículos: 0.0377 % de um núcleo

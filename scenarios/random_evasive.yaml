@@ -1,0 +1,18 @@
+name: random_evasive
+description: Rota aleatória (semente fixa) com mudanças bruscas de direção e altura
+duration: 75
+target:
+  start: [10, 0, 6]
+  path:
+  - trajectory:
+      type: random
+      center: [24, 0, 7]
+      size: [14, 12, 3]
+      count: 10
+      seed: 7
+      speed: 3.0
+pursuer:
+  start: [0, 0, 6]
+  detection: vision
+  acquisition: auto
+  start_after: 2

@@ -1,0 +1,31 @@
+name: depth_range_probe
+description: >-
+  Padronizado: perseguidor parte de costas (face_target precisa alinhá-lo), X4 se aproxima em linha reta
+  de 34 m a 8 m; mede a precisão da ROI automática e o alcance real da câmera de profundidade.
+duration: 40
+target:
+  start: [5, -2, 1]
+  path:
+  - trajectory: aproxima
+    loops: 1
+  - hover: 30
+pursuer:
+  start: [0, 0, 6]
+  heading_deg: 180
+  face_target: true
+  heading_tolerance_deg: 3
+  detection: vision
+  acquisition: auto
+  reacquire: true
+  start_after: 38
+trajectories:
+  aproxima:
+    type: waypoints
+    points:
+    - [34, 0, 6]
+    - [8, 0, 6]
+    speed: 0.7
+staging:
+  timeout: 60
+  tolerance: 1.0
+  settle: 2.0

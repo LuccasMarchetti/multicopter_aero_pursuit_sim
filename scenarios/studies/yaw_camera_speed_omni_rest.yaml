@@ -1,0 +1,5 @@
+# Rest of yaw_camera_speed_omni after 20261122_164949 (circle and helix 3/6.5 m/s kept): the pursuer
+# followed the X4 sinking to the ground on the helix at 10 m/s, landed, and was never armed again.
+studies:
+- yaw_camera_speed_omni_rest_helix.yaml
+- yaw_camera_speed_omni_rest_others.yaml

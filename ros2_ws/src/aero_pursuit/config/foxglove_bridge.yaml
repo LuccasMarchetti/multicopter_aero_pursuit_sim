@@ -1,0 +1,25 @@
+# foxglove_bridge for remote/network use with low latency.
+#
+# Cause of the ~20 s latency: the bridge queues up to send_buffer_limit (default 10 MB) per
+# client and the kernel up to ~4 MB more per socket (tcp_wmem). When the panel asks for more bandwidth
+# than the link delivers, the queue fills and everything (image, TF, status) arrives late:
+# 14 MB at 5 Mbit/s ~= 22 s. Here the queue is short (the bridge drops instead of accumulating)
+# and the raw image topics (1920x1080 RGB @ 30 Hz ~= 1.5 Gbit/s) are left out.
+# No kernel: sudo sysctl -w net.ipv4.tcp_notsent_lowat=131072 (ver README).
+foxglove_bridge:
+  ros__parameters:
+    use_sim_time: true
+    port: 8765
+    address: 0.0.0.0
+    # ~1 MB: worst case ~1.6 s of queue at 5 Mbit/s; beyond that the bridge drops.
+    send_buffer_limit: 1000000
+    min_qos_depth: 1
+    max_qos_depth: 5
+    # Raw images (RGB, depth, uncompressed debug) are not advertised.
+    # Use /camera/segmented_bb/compressed (JPEG, scale 0.5) in the Image panel.
+    # Para liberar tudo: FOXGLOVE_ALL_TOPICS=1 ./start_simulation.sh
+    topic_whitelist: ['^(?!(/camera|/depth_camera|/camera/segmented_bb|/spectator/image)$).*$']
+    # Sensor streams as best-effort: no retransmission/queue on the DDS side.
+    best_effort_qos_topic_whitelist: ['^/camera/segmented_bb/compressed$']
+    # System panel every 2 s instead of 0.5 s.
+    sysinfo_refresh_interval: 2000

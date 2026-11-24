@@ -1,0 +1,23 @@
+name: s2_line
+description: 'Option A S2: straight line at 1.5 m/s (steady-state error, feedforward)'
+duration: 45
+target:
+  start: [8, 0, 1]
+  path:
+  - trajectory: reta
+pursuer:
+  start: [0, 0, 5]
+  detection: vision
+  acquisition: auto
+  start_after: 2
+trajectories:
+  reta:
+    type: line
+    speed: 1.5
+    points:
+    - [8, 0, 6]
+    - [90, 0, 6]
+staging:
+  timeout: 120
+  tolerance: 1.0
+  settle: 1.0

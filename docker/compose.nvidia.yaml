@@ -1,0 +1,14 @@
+# NVIDIA GPU (requires nvidia-container-toolkit on the host). docker/aero.sh includes this
+# file by itself when it finds nvidia-smi.
+services:
+  aero:
+    environment:
+      NVIDIA_DRIVER_CAPABILITIES: all
+      __GLX_VENDOR_LIBRARY_NAME: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, graphics, video, compute, utility]

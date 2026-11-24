@@ -1,0 +1,13 @@
+{
+    "ROS2.distro": "jazzy",
+    "python.autoComplete.extraPaths": [
+        "/home/luccas/aero_pursuit/ros2_ws/install_debug/px4_msgs/lib/python3.12/site-packages",
+        "/home/luccas/aero_pursuit/ros2_ws/install/px4_msgs/lib/python3.12/site-packages",
+        "/opt/ros/jazzy/lib/python3.12/site-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/luccas/aero_pursuit/ros2_ws/install_debug/px4_msgs/lib/python3.12/site-packages",
+        "/home/luccas/aero_pursuit/ros2_ws/install/px4_msgs/lib/python3.12/site-packages",
+        "/opt/ros/jazzy/lib/python3.12/site-packages"
+    ]
+}

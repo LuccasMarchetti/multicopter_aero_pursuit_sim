@@ -1,0 +1,19 @@
+name: helix_climb
+description: Hélice subindo de 5 a 13 m (alvo inclina e sobe ao mesmo tempo)
+duration: 70
+target:
+  start: [8, 0, 5]
+  path:
+  - trajectory:
+      type: helix
+      center: [20, 0, 5]
+      radius: 8
+      height: 8
+      turns: 2
+      speed: 2.5
+  - hover: 3
+pursuer:
+  start: [0, 0, 5]
+  detection: vision
+  acquisition: auto
+  start_after: 2

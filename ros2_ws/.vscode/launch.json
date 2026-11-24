@@ -1,0 +1,24 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "ROS 2: Rodar offboard_control",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "/home/luccas/aero_pursuit/ros2_ws/build_debug/aero_pursuit/offboard_control",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "/home/luccas/aero_pursuit/ros2_ws",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "setupCommands": [
+        {
+          "description": "Ativa formatação amigável",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+\chapter{Guiamento híbrido PN/PP}
+\label{cap:guiamento}
+
+\section{Lei de controle}
+Arquivo \code{control/hybrid\_guidance\_controller.cpp}. A aceleração é decomposta em
+componente \textbf{lateral} (perpendicular à LOS, gira a LOS) e \textbf{radial} (ao
+longo da LOS, controla a distância):
+\begin{align}
+  \vect a_{PN} &= N\,V_c\,(\vect\Omega\times\rhat),\quad
+     \vect\Omega = \frac{\rr\times\dot\rr}{\lVert\rr\rVert^2},\quad V_c = -\dot r
+     && \text{(navegação proporcional)}\\
+  \vect a_{PP} &= K\,\max(\lVert\vect v_c\rVert,v_{min})\,
+     \left(\rhat - (\rhat\cdot\hat{\vect v}_c)\hat{\vect v}_c\right)
+     && \text{(perseguição pura)}\\
+  \vect a_{lat} &= \left[\alpha\vect a_{PN}+(1-\alpha)\vect a_{PP}
+     + k_{lat}\,\dot\rr_\perp\right]_\perp\\
+  \vect a_r &= \left(k_r(r-d) + k_{rd}\,\dot r\right)\rhat .
+\end{align}
+\code{yaml}: $N=4$, $K=1$, $\alpha=0{,}5$, $k_{lat}=1$, $k_r=0{,}8$, $k_{rd}=1{,}2$,
+$v_{min}=\SI{1}{m/s}$.
+
+\section{Malha radial (distância)}
+Ao longo da LOS, $\ddot r = a_{t,r} - a_{c,r}$. Com $a_{c,r}=k_r(r-d)+k_{rd}\dot r$:
+\begin{equation}
+  \ddot{\tilde r} + k_{rd}\dot{\tilde r} + k_r\tilde r = a_{t,r},\qquad \tilde r=r-d .
+\end{equation}
+É um PD clássico, então valem \eqref{eq:pd-polos} e o LGR. Com o \code{yaml}:
+$\omega_n=\sqrt{0{,}8}=\SI{0,89}{rad/s}$ e $\zeta=1{,}2/(2\cdot0{,}89)=0{,}67$ ($t_s\approx\SI{6,7}{s}$,
+mais lento que LQR/MPC). Diferentemente dos controladores de aceleração anteriores,
+aqui $\dot r$ vem do KF (velocidade relativa \emph{medida}). O atraso entra também no
+termo derivativo, então use $L(s)=(k_r+k_{rd}s)\,T_v(s)\,e^{-s\tau}/s^2$ na análise de margem.
+
+\section{Malha lateral (linha de visada)}
+Linearizando para pequenos ângulos de LOS $\lambda$ e alcance $r\approx d$:
+$r\ddot\lambda \approx a_{t,\perp} - a_{c,\perp}$. Para a PN pura,
+$a_{c,\perp}=N V_c\dot\lambda$. A teoria clássica de interceptação
+(Zarchan) recomenda $N\in[3,5]$: com $N=3$ a demanda de aceleração é mínima contra um
+alvo não manobrante, e $N>3$ antecipa manobras.
+
+\begin{atencao}
+A PN foi criada para \emph{interceptação} ($V_c>0$ grande). Na perseguição com standoff,
+em regime $V_c\to0$ e o termo PN se anula. Quem mantém a LOS é o termo $k_{lat}\dot\rr_\perp$
+(casamento de velocidade lateral) e o PP. Na fase de regime, portanto, a malha lateral
+é aproximadamente $a_\perp=k_{lat}\dot\rr_\perp$: um amortecedor de 1ª ordem com
+constante $1/k_{lat}$, sem realimentação de posição lateral. O ``erro lateral'' é
+absorvido girando a LOS, e não há ponto lateral fixo a perseguir.
+\end{atencao}
+
+\section{Cálculo dos ganhos e ajuste ótimo}
+\begin{enumerate}
+  \item Radial: escolha $\omega_n,\zeta$ e faça $k_r=\omega_n^2$, $k_{rd}=2\zeta\omega_n$.
+        Confira a margem com PX4 + atraso.
+  \item Lateral: $N=3$--$4$; $k_{lat}\approx1/\tau_{lat}$ com $\tau_{lat}\sim$ 0,5--\SI{1}{s}.
+  \item $\alpha$: compromisso entre PN (eficiente em aproximação) e PP (robusto a ruído
+        de LOS, que a PN amplifica por depender de $\dot\lambda$).
+  \item Ajuste fino: \code{otimizar\_ganhos.m} com $\theta=[N,\alpha,k_r,k_{rd},k_{lat}]$.
+\end{enumerate}

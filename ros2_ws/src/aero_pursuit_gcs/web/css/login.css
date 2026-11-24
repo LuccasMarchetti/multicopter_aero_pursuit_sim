@@ -1,0 +1,9 @@
+html, body { margin: 0; height: 100%; background: #0d1218; color: #dfe6ee; font: 14px system-ui, sans-serif; color-scheme: dark; }
+body { display: flex; align-items: center; justify-content: center; }
+form { background: #1b2530; border: 1px solid #283544; border-radius: 10px; padding: 24px 28px; width: min(360px, 90vw); }
+h1 { margin: 0 0 8px; color: #4fc3f7; font-size: 20px; }
+p { color: #8796a6; }
+input { width: 100%; box-sizing: border-box; padding: 8px 10px; background: #0f161e; color: inherit;
+  border: 1px solid #283544; border-radius: 6px; font: inherit; margin-bottom: 12px; }
+button { width: 100%; padding: 8px; background: #1e5a7a; color: inherit; border: 1px solid #2a7aa5; border-radius: 6px; font: inherit; cursor: pointer; }
+.err { color: #ef5350; min-height: 1em; }

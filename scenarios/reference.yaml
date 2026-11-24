@@ -1,0 +1,94 @@
+# Scenario reference: every field, with its default. A valid scenario (the tests load it).
+# Units: meters, seconds, degrees (*_deg). Coordinates: world ENU (x east, y north, z up).
+# Only `name` is required; everything else has the default shown.
+
+name: reference                 # file name style: letters, digits, _ or -
+description: Every scenario field, commented
+duration: 60                    # [s] of chase per run; 0 = until the target path ends
+repetitions: 1                  # runs in a row (each one restarts from the start positions)
+capture_distance: 0             # [m] > 0: the run ends when the pursuer gets this close
+target_speed: 0                 # [m/s] target speed along its path; 0 = the speeds written in
+                                #   the path (also the live slider in the GCS)
+
+# The pursued drone: where it starts and the path it flies.
+target:
+  name: X4                      # model name in the simulator (X4 exists in the base world)
+  model: x4                     # x3 | x4 | x5 | tiltrotor
+  start: [5, -2, 1]             # where it waits before the run (staging)
+  max_speed: 6                  # [m/s] velocity command limit
+  yaw: velocity                 # heading: velocity (nose along the motion) | hold | <degrees>
+  loops: 1                      # times the whole path is flown; 0 = forever
+  path:                         # legs, one after the other:
+    - goto: [20, 0, 6]          # 1. fly straight to a point (speed: transit, 3 m/s)
+      speed: 2
+    - hover: 2                  # 2. hover in place [s] (at: [x, y, z] to hover elsewhere)
+    - trajectory: lap           # 3. a trajectory from the library below (or written inline)
+      loops: 2                  #    laps of this leg (0 = forever)
+      speed: 3                  #    overrides the trajectory's speed
+    - trajectory:               # 4. inline trajectory: samples with a time each, e.g. a CSV
+        type: timed             #    t,x,y,z (the GCS imports CSV/Excel); the drone is at each
+        interpolation: linear   #    point at its time (variable speed)
+        points:
+          - [0, 20, 0, 6]       #    [t, x, y, z]
+          - [3, 26, 4, 7]
+          - [5, 26, 4, 7]       #    same point again: waits 2 s
+          - [8, 20, 0, 6]
+    - behavior: flee            # 5. reactive: flee | random | orbit (around the pursuer)
+      duration: 15              #    [s]; 0 = forever
+      speed: 3
+      arena_radius: 40          #    stays inside this circle (arena_center: [x, y])
+      min_altitude: 2
+      max_altitude: 15
+      seed: 1                   #    random seed: same number = same manoeuvres (0 = new each run)
+
+# Reusable trajectories (referenced by name in a path). Types and their fields:
+#   waypoints  points ([x,y,z] or {p: [x,y,z], speed: m/s, hold: s}), interpolation linear|spline, closed
+#   line       points: [A, B]; closed: true = back and forth
+#   circle     center, radius, clockwise, phase_deg
+#   polygon    center, radius, sides, heading_deg, phase_deg
+#   figure8    center, size [half width, half height, vertical oscillation], heading_deg
+#   roll_deg, pitch_deg (circle, polygon, figure8, lissajous, helix, random): tilt about the
+#              shape own x / y axes, applied before heading_deg
+#   lissajous  center, size (amplitudes), frequency [fx, fy, fz], phase3_deg
+#   helix      center, radius, height (climbs, then descends), turns, clockwise
+#   random     center, size (half extents of the box), count (points), seed: closed spline
+#   timed      points [t, x, y, z]: position at each time (from a CSV)
+# Common: speed [m/s] (constant along the curve), relative: true = coordinates relative to where
+# the drone is when the leg starts.
+trajectories:
+  lap:
+    type: waypoints
+    interpolation: spline
+    closed: true
+    speed: 3
+    points:
+      - [20, 0, 6]
+      - {p: [30, 8, 8], speed: 4}        # 4 m/s from here to the next point
+      - {p: [40, 0, 6], hold: 1}         # stops 1 s here
+      - [30, -8, 5]
+
+# The pursuer (PX4): where it starts and when the chase begins.
+pursuer:
+  start: [0, 0, 5]
+  heading_deg: 0                # start heading (ignored with face_target)
+  face_target: true             # turn the camera to the target before starting
+  heading_tolerance_deg: 3      #   ... and wait until aligned within this
+  detection: vision             # vision (camera tracker) | omniscient (exact target position)
+  acquisition: auto             # auto: first box from the ground truth | manual: click on the video
+  reacquire: true               # auto: restart the tracker if it loses the target
+  start_after: 2                # [s] after the run starts, the chase is enabled...
+  wait_for_detection: false     #   ... and, if true, only once the tracker has the target
+  patrol: []                    # optional path flown BEFORE the chase starts (same legs as above)
+
+# Before each run: everyone flies to their start position.
+staging:
+  timeout: 45                   # [s] maximum
+  tolerance: 1.0                # [m] target close enough to its start
+  pursuer_tolerance: 0.3        # [m] pursuer close enough to its start
+  settle: 1.0                   # [s] wait once everyone is there
+  max_speed: 0.15               # [m/s] everyone at rest
+
+# ROS parameters applied at the start of each run: node -> parameter -> value.
+parameters:
+  /pursuit_controller_node:
+    target_distance: 5.0

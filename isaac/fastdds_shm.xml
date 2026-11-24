@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fast DDS profile shared by Isaac Sim (internal ROS 2 Jazzy, Fast DDS 2.14) and the aero-isaac
+  container (FASTRTPS_DEFAULT_PROFILES_FILE, isaac/run_world.sh and isaac/isaac.sh):
+  - shared memory with 64 MB segments: one camera frame is 6 MB (RGB 1920x1080) + 8 MB (depth
+    32FC1); with the default 512 KB segment they fell back to UDP fragments and the tracker got
+    ~10 of the 31 frames/s;
+  - UDPv4 on the loopback only (discovery and small messages): nothing leaves the computer;
+  - discovery by unicast to 127.0.0.1 (no multicast, same on both sides).
+-->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <transport_descriptors>
+    <transport_descriptor>
+      <transport_id>shm_large</transport_id>
+      <type>SHM</type>
+      <segment_size>67108864</segment_size>
+      <maxMessageSize>67108864</maxMessageSize>
+    </transport_descriptor>
+    <transport_descriptor>
+      <transport_id>udp_loopback</transport_id>
+      <type>UDPv4</type>
+      <interfaceWhiteList>
+        <address>127.0.0.1</address>
+      </interfaceWhiteList>
+    </transport_descriptor>
+  </transport_descriptors>
+
+  <participant profile_name="aero_isaac" is_default_profile="true">
+    <rtps>
+      <userTransports>
+        <transport_id>shm_large</transport_id>
+        <transport_id>udp_loopback</transport_id>
+      </userTransports>
+      <useBuiltinTransports>false</useBuiltinTransports>
+      <builtin>
+        <initialPeersList>
+          <locator>
+            <udpv4>
+              <address>127.0.0.1</address>
+            </udpv4>
+          </locator>
+        </initialPeersList>
+      </builtin>
+    </rtps>
+  </participant>
+</profiles>

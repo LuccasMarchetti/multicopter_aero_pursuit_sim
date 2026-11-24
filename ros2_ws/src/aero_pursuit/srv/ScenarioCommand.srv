@@ -1,0 +1,13 @@
+# scenario_runner commands (/scenario_runner/command).
+#   load    loads `yaml` (text) or `path` (file); spawns the missing drones
+#   start   starts (loads first, if `yaml`/`path` are filled)
+#   stop    stops (drones hover; pursuit disabled)
+#   pause | resume
+#   unload  stops and removes the drones spawned by the scenario
+string command
+string yaml
+string path
+string variant                    # Run label (studies)
+---
+bool success
+string message

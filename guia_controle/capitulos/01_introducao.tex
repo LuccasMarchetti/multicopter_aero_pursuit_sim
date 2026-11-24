@@ -1,0 +1,87 @@
+\chapter{Introdução e como usar este guia}
+
+\section{Objetivo}
+Este guia acompanha o pacote \code{aero\_pursuit} e serve de base teórica e prática
+para o TCC: \emph{comparar o desempenho de diferentes leis de controle} na perseguição
+de um drone alvo por um x500 equipado com câmera de profundidade (OAK-D Lite) e
+controlado por uma Pixhawk/PX4 em modo \emph{offboard}.
+
+Para cada técnica implementada no código (\cref{tab:controladores}) o guia mostra:
+\begin{enumerate}
+  \item a lei de controle exatamente como está no C++ (arquivo e equação);
+  \item o modelo usado no projeto e as hipóteses;
+  \item como \textbf{calcular os ganhos} à mão (alocação de polos, especificações de
+        tempo de resposta e sobressinal) e pelo \textbf{lugar geométrico das raízes} (LGR);
+  \item como obter a versão \textbf{ótima} (LQR/DARE, MPC, otimização numérica de um
+        índice de desempenho);
+  \item como levar em conta o \textbf{tempo discreto} (período do laço de 50 ms, ZOH),
+        a \textbf{malha interna da Pixhawk} e os \textbf{atrasos} (câmera, rastreador,
+        comunicação);
+  \item o script MATLAB correspondente na pasta \code{matlab/}.
+\end{enumerate}
+
+\begin{table}[H]
+\centering
+\caption{Controladores do pacote (\code{controller\_type} em \code{aero\_pursuit.yaml}).}
+\label{tab:controladores}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\code{controller\_type} & Técnica & Saída & Capítulo \\
+\midrule
+\code{pbvs\_pid} & Servovisão por posição + PID & velocidade & \ref{cap:pid} \\
+\code{lqr} & Regulador linear quadrático (DARE) & aceleração & \ref{cap:lqr} \\
+\code{lqi} & LQR com ação integral & aceleração & \ref{cap:lqi} \\
+\code{asmc} & Modos deslizantes adaptativo & aceleração & \ref{cap:smc} \\
+\code{mpc} (\code{kinematic}) & MPC linear LTV (duplo integrador) & aceleração & \ref{cap:mpc} \\
+\code{mpc} (\code{dynamic}) & MPC de estado completo do x500 & atitude/empuxo & \ref{cap:mpcdin} \\
+\code{hermite} & Planejamento quíntico + planeza & vel./acel./jerk & \ref{cap:hermite} \\
+\code{hybrid\_pn} & Guiamento híbrido PN/PP & aceleração & \ref{cap:guiamento} \\
+\code{external} & Política externa (RL) & velocidade & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Mapa do sistema}
+O laço de perseguição tem cinco blocos em cascata. Entender quem é rápido e quem é
+lento é o ponto de partida de qualquer projeto:
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Bloco & Frequência & Atraso típico \\
+\midrule
+Câmera RGB/profundidade (Gazebo) & \SI{30}{Hz} & \SI{17}{ms} (meio período) \\
+Rastreador VitTrack + profundidade & $\approx$\SI{30}{Hz} & 30--\SI{60}{ms} \\
+Estimador (KF de velocidade constante) & por medida & atraso de fase do filtro \\
+\textbf{Controlador de perseguição} (\code{pursuit\_controller\_node}) & \SI{20}{Hz} ($T_s=\SI{0,05}{s}$) & $T_s/2$ (ZOH) \\
+PX4: velocidade $\to$ atitude $\to$ taxa $\to$ motores & 50/250/\SI{800}{Hz} & $\tau_v\approx$ 0,2--\SI{0,7}{s} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+O controlador de perseguição é a \emph{malha externa}: ele não comanda motores, e sim
+um \code{TrajectorySetpoint} (velocidade + aceleração de \emph{feedforward}) que a
+Pixhawk segue com a sua própria malha interna. Portanto a ``planta'' vista pelo nosso
+controlador é \textbf{o drone já controlado pela PX4} --- e não o drone nu.
+
+\section{Como ler e usar}
+\begin{itemize}
+  \item Os capítulos \ref{cap:modelagem}--\ref{cap:discreto} são a base comum: modelagem,
+        ferramentas (LGR, Bode, especificações) e o efeito de amostragem e da PX4.
+        Leia-os primeiro.
+  \item Os capítulos \ref{cap:pid}--\ref{cap:guiamento} são independentes: um por técnica.
+  \item O capítulo \ref{cap:comparacao} define a metodologia de comparação justa (mesmos
+        cenários, mesmo índice de custo, ajuste ótimo de cada controlador, Monte Carlo).
+  \item O capítulo \ref{cap:caso} documenta a correção da oscilação ``vai e volta''
+        encontrada no MPC (filtro de Kalman relativo e referência da linha de visada).
+        É um bom estudo de caso para o texto do TCC.
+  \item O Apêndice \ref{ap:matlab} descreve todos os scripts MATLAB e o gerador dos
+        modelos Simulink.
+\end{itemize}
+
+\begin{dica}
+Rode \code{matlab/parametros.m} primeiro: ele define, num único \code{struct}, todos os
+parâmetros (x500, PX4, ganhos do \code{yaml}, atrasos). Todos os outros scripts o
+chamam. Se você mudar um ganho no \code{aero\_pursuit.yaml}, mude também lá.
+\end{dica}

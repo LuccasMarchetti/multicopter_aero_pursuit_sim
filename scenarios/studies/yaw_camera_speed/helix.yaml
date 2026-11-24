@@ -1,0 +1,21 @@
+# Your scenarios/helix.yaml, radius 10 -> 10.04 m so up and down is 505 m, flown once.
+name: helix
+description: Helix of radius 10.04 m (505 m) climbing 12 m in 4 turns and descending, from 12 m (the pursuer altitude) up to 24 m
+duration: 0                  # until the lap is complete
+target:
+  start: [5, 0, 12]
+  path:
+  - trajectory:
+      type: helix
+      center: [15.04, 0, 12]
+      radius: 10.04
+      speed: 2.5
+      height: 12
+      turns: 4
+      phase_deg: 180
+    loops: 1
+pursuer:
+  start: [0, 0, 12]
+  detection: vision
+  acquisition: auto
+  start_after: 0

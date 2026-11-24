@@ -1,0 +1,59 @@
+<?xml version="1.0" ?>
+<sdf version="1.9">
+  <!-- PX4 tiltrotor (Tools/simulation/gz/models/tiltrotor) as a velocity-controlled target. Everything
+       of the PX4 model is kept (wing/surface LiftDrag, tilt servos held at 0 = hover, its own
+       MulticopterMotorModel plugins: ccw ccw cw cw, kf 2e-5, km 0.06); only the velocity controller is
+       added. Isolated step test (1 m/s climb, 2 m/s forward, 0.6 rad/s yaw): 0.97 / 2.16 / 0.55. -->
+  <model name="tiltrotor_custom">
+    <include merge="true">
+      <uri>model://tiltrotor</uri>
+    </include>
+    <!-- Gains = X4 gains x (mass, inertia) ratio: the controller normalizes them by mass/inertia.
+         Velocity control (Twist on /<ns>/gazebo/command/twist, on/off on /<ns>/enable). It drives the
+         included model's own MulticopterMotorModel plugins (topic /<model>/command/motor_speed,
+         ccw ccw cw cw); no duplicated motor plugins on the same joints. -->
+    <plugin filename="gz-sim-multicopter-control-system" name="gz::sim::systems::MulticopterVelocityControl">
+      <robotNamespace>Tiltrotor</robotNamespace>
+      <commandSubTopic>gazebo/command/twist</commandSubTopic>
+      <enableSubTopic>enable</enableSubTopic>
+      <motorControlPubTopic>command/motor_speed</motorControlPubTopic>
+      <comLinkName>base_link</comLinkName>
+      <velocityGain>8.90 8.90 14.84</velocityGain>
+      <attitudeGain>10.54 7.78 1.98</attitudeGain>
+      <angularRateGain>1.84 1.36 0.69</angularRateGain>
+      <maximumLinearAcceleration>3 3 3</maximumLinearAcceleration>
+      <maximumLinearVelocity>10 10 5</maximumLinearVelocity>
+      <maximumAngularVelocity>3 3 3</maximumAngularVelocity>
+      <rotorConfiguration>
+        <rotor>
+          <jointName>rotor_0_joint</jointName>
+          <forceConstant>2e-05</forceConstant>
+          <momentConstant>0.06</momentConstant>
+          <direction>1</direction> <!-- CCW -->
+        </rotor>
+        <rotor>
+          <jointName>rotor_1_joint</jointName>
+          <forceConstant>2e-05</forceConstant>
+          <momentConstant>0.06</momentConstant>
+          <direction>1</direction> <!-- CCW -->
+        </rotor>
+        <rotor>
+          <jointName>rotor_2_joint</jointName>
+          <forceConstant>2e-05</forceConstant>
+          <momentConstant>0.06</momentConstant>
+          <direction>-1</direction> <!-- CW -->
+        </rotor>
+        <rotor>
+          <jointName>rotor_3_joint</jointName>
+          <forceConstant>2e-05</forceConstant>
+          <momentConstant>0.06</momentConstant>
+          <direction>-1</direction> <!-- CW -->
+        </rotor>
+      </rotorConfiguration>
+    </plugin>
+
+    <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+      <dimensions>3</dimensions>
+    </plugin>
+  </model>
+</sdf>

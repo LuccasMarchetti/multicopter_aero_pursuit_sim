@@ -1,0 +1,8 @@
+# Base-world target drones (scenario_runner `base_drones`) to keep in the simulation: the
+# listed ones are spawned if missing (velocity controller enabled), the others are removed.
+# Drones used by the loaded scenario are never removed.
+string[] present
+---
+bool success
+string message
+string[] present   # Requested base drones now in the world or being spawned

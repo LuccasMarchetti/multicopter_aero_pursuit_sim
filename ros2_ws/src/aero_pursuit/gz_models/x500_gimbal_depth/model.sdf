@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  x500 + OakD-Lite (RGB IMX214 + depth StereoOV7251) on a 3-axis gimbal.
+
+  Inserted by launch_gz_and_drones.sh (AERO_CAMERA_MOUNT=gimbal) with the name x500_depth_0, so
+  every frame, topic and bridge entry of the fixed x500_depth stays the same; PX4 attaches to it
+  (PX4_GZ_MODEL_NAME). Reference: PX4's x500_gimbal (CGO3 gimbal, mono camera only).
+
+  Kinematics (all pivots at the camera_link origin, axes of the body FLU):
+    base_link -> gimbal_yaw_joint (z) -> gimbal_roll_joint (x) -> gimbal_pitch_joint (-y: + = up)
+  Pivot at base_link + (0.15, 0.03, -0.075): under the front of the body, so the camera can look
+  down without seeing the frame. The OakD sensors sit 3 cm to the -y of the link origin (as in
+  x500_depth), hence y = 0.03 to center them. Model frame = base_link - 0.24 m (merged x500_base
+  pose): the static TF x500_depth_0 -> gimbal_mount is (0.15, 0.03, 0.165).
+
+  Joints: JointPositionController with velocity commands (stiff, no oscillation, independent of
+  the tiny link inertias). The "inertia" of the camera motion is modelled in gimbal_controller.
+-->
+<sdf version='1.9'>
+  <model name='x500_gimbal_depth'>
+    <include merge='true'>
+      <uri>model://x500</uri>
+    </include>
+
+    <!-- Yaw stage: post under the body -->
+    <link name="gimbal_yaw_link">
+      <pose relative_to="base_link">0.15 0.03 -0.075 0 0 0</pose>
+      <inertial>
+        <mass>0.03</mass>
+        <inertia><ixx>1e-5</ixx><iyy>1e-5</iyy><izz>1e-5</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+      <visual name="gimbal_yaw_post">
+        <pose>0 0 0.035 0 0 0</pose>
+        <geometry><cylinder><radius>0.012</radius><length>0.05</length></cylinder></geometry>
+        <material><ambient>.15 .15 .15 1</ambient><diffuse>.15 .15 .15 1</diffuse></material>
+      </visual>
+      <visual name="gimbal_yaw_motor">
+        <pose>0 0 0.062 0 0 0</pose>
+        <geometry><cylinder><radius>0.02</radius><length>0.012</length></cylinder></geometry>
+        <material><ambient>.3 .3 .32 1</ambient><diffuse>.3 .3 .32 1</diffuse></material>
+      </visual>
+    </link>
+    <joint name="gimbal_yaw_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>gimbal_yaw_link</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit><lower>-2.967</lower><upper>2.967</upper><effort>10</effort><velocity>20</velocity></limit>
+        <dynamics><damping>0.001</damping></dynamics>
+      </axis>
+    </joint>
+
+    <!-- Roll stage: back plate holding the pitch motor -->
+    <link name="gimbal_roll_link">
+      <pose relative_to="base_link">0.15 0.03 -0.075 0 0 0</pose>
+      <inertial>
+        <mass>0.03</mass>
+        <inertia><ixx>1e-5</ixx><iyy>1e-5</iyy><izz>1e-5</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+      <visual name="gimbal_roll_arm">
+        <pose>-0.03 -0.03 0.01 0 0 0</pose>
+        <geometry><box><size>0.008 0.11 0.012</size></box></geometry>
+        <material><ambient>.15 .15 .15 1</ambient><diffuse>.15 .15 .15 1</diffuse></material>
+      </visual>
+      <visual name="gimbal_roll_motor">
+        <pose>-0.03 -0.03 0.01 0 1.5708 0</pose>
+        <geometry><cylinder><radius>0.016</radius><length>0.012</length></cylinder></geometry>
+        <material><ambient>.3 .3 .32 1</ambient><diffuse>.3 .3 .32 1</diffuse></material>
+      </visual>
+    </link>
+    <joint name="gimbal_roll_joint" type="revolute">
+      <parent>gimbal_yaw_link</parent>
+      <child>gimbal_roll_link</child>
+      <axis>
+        <xyz>1 0 0</xyz>
+        <limit><lower>-0.785</lower><upper>0.785</upper><effort>10</effort><velocity>20</velocity></limit>
+        <dynamics><damping>0.001</damping></dynamics>
+      </axis>
+    </joint>
+
+    <!-- Camera (link camera_link, sensors IMX214 and StereoOV7251, topic /depth_camera) -->
+    <include merge='true'>
+      <uri>model://OakD-Lite</uri>
+      <pose relative_to="base_link">0.15 0.03 -0.075 0 0 0</pose>
+    </include>
+    <joint name="gimbal_pitch_joint" type="revolute">
+      <parent>gimbal_roll_link</parent>
+      <child>camera_link</child>
+      <axis>
+        <xyz>0 -1 0</xyz>
+        <!-- Stops well outside the gimbal_node command range (-90..30 deg): driven by velocity commands, the joint pushed against a stop 1.5 deg past the command stuck there (camera 31.5 deg up for 24 study runs). -->
+        <limit><lower>-1.9</lower><upper>0.8</upper><effort>10</effort><velocity>20</velocity></limit>
+        <dynamics><damping>0.001</damping></dynamics>
+      </axis>
+    </joint>
+
+    <plugin filename="gz-sim-joint-position-controller-system"
+            name="gz::sim::systems::JointPositionController">
+      <joint_name>gimbal_yaw_joint</joint_name>
+      <sub_topic>gimbal/yaw</sub_topic>
+      <use_velocity_commands>true</use_velocity_commands>
+      <p_gain>40</p_gain><i_gain>0</i_gain><d_gain>0</d_gain>
+      <cmd_max>15</cmd_max><cmd_min>-15</cmd_min>
+    </plugin>
+    <plugin filename="gz-sim-joint-position-controller-system"
+            name="gz::sim::systems::JointPositionController">
+      <joint_name>gimbal_roll_joint</joint_name>
+      <sub_topic>gimbal/roll</sub_topic>
+      <use_velocity_commands>true</use_velocity_commands>
+      <p_gain>40</p_gain><i_gain>0</i_gain><d_gain>0</d_gain>
+      <cmd_max>15</cmd_max><cmd_min>-15</cmd_min>
+    </plugin>
+    <plugin filename="gz-sim-joint-position-controller-system"
+            name="gz::sim::systems::JointPositionController">
+      <joint_name>gimbal_pitch_joint</joint_name>
+      <sub_topic>gimbal/pitch</sub_topic>
+      <use_velocity_commands>true</use_velocity_commands>
+      <p_gain>40</p_gain><i_gain>0</i_gain><d_gain>0</d_gain>
+      <cmd_max>15</cmd_max><cmd_min>-15</cmd_min>
+    </plugin>
+    <!-- Measured angles -> /world/<world>/model/<model>/joint_state (gimbal_controller: camera TF) -->
+    <plugin filename="gz-sim-joint-state-publisher-system"
+            name="gz::sim::systems::JointStatePublisher">
+      <joint_name>gimbal_yaw_joint</joint_name>
+      <joint_name>gimbal_roll_joint</joint_name>
+      <joint_name>gimbal_pitch_joint</joint_name>
+    </plugin>
+  </model>
+</sdf>

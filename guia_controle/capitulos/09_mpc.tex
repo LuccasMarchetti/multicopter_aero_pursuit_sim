@@ -1,0 +1,136 @@
+\chapter{MPC cinemático (LTV sobre o duplo integrador)}
+\label{cap:mpc}
+
+\section{Ideia}
+O controle preditivo (MPC) resolve, a cada ciclo, um problema de controle ótimo de
+horizonte finito a partir do estado atual. Aplica só o primeiro comando e repete no
+ciclo seguinte (horizonte deslizante). As vantagens sobre o LQR são
+(i) as \textbf{restrições} explícitas ($|\vect a|\le a_{max}$, $|\vect v|\le v_{max}$) e
+(ii) a \textbf{referência variante no tempo} (alvo previsto ao longo do horizonte).
+
+\section{Formulação (\code{control/mpc\_controller.cpp})}
+\subsection{Grade de tempo não uniforme}
+Com \code{online: true}, o passo do estágio $k$ é $\Delta_k = \Ts\,g^k$
+(\code{horizon\_growth} $g=1{,}15$). O horizonte total é
+\begin{equation}
+  T_H = \Ts\frac{g^N-1}{g-1} = 0{,}05\cdot\frac{1{,}15^{10}-1}{0{,}15}=\SI{1,02}{s}.
+\end{equation}
+Os primeiros estágios são finos (precisão no comando aplicado) e os últimos são
+grossos (visão de longo prazo com poucas variáveis). Cada estágio tem seu
+$A_k,B_k$ de \eqref{eq:did} com $\Ts\to\Delta_k$, e o sistema é linear variante no
+tempo (LTV).
+
+\subsection{Predição condensada}
+Empilhando $X=[x_1;\dots;x_N]$ e $U=[u_0;\dots;u_{N-1}]$:
+\begin{equation}
+  X = S_x\,x_0 + S_u\,U,\qquad
+  S_x = \begin{bmatrix}A_0\\A_1A_0\\ \vdots\end{bmatrix},\quad
+  [S_u]_{kj} = A_{k}\cdots A_{j+1}B_j\ (j\le k).
+\end{equation}
+\subsection{Custo e QP}
+\begin{equation}
+  J = (X-X_{ref})\T\bar Q(X-X_{ref}) + U\T\bar R U
+  = \tfrac12 U\T H U + g\T U + \text{cte},
+\end{equation}
+\begin{equation}
+  H = 2\left(S_u\T\bar QS_u + \bar R\right),\qquad
+  g = 2S_u\T\bar Q\left(S_x x_0 - X_{ref}\right),
+\end{equation}
+com $\bar Q=\mathrm{diag}(Q,\dots,Q,\,w_N Q)$ (\code{terminal\_weight} $w_N=2$) e
+$\bar R = r I$. Esta forma condensada é a que se usa para analisar a lei (ganho
+$K_{MPC}$, mais abaixo); no código, o problema com restrições
+\begin{equation}
+  \min_{\vect x,\vect u}\ \sum_k \lVert\vect x_k-\vect x_{ref,k}\rVert_Q^2+\lVert\vect u_k\rVert_R^2
+  \quad\text{s.a.}\quad \vect x_{k+1}=f(\vect x_k,\vect u_k),\ \lVert u_k\rVert\le a_{max},\
+  \lVert v_k\rVert\le v_{max}
+\end{equation}
+é resolvido pelo \textbf{acados} (OCP \code{aero\_kin}, \code{acados/aero\_ocps.py}):
+\emph{multiple shooting}, SQP com Hessiana exata (o problema é convexo) e o QP de cada iteração
+pelo HPIPM com condensação parcial. A norma da aceleração é restrição dura (com a caixa
+$|a_i|\le a_{max}$ junto, porque o gradiente de $\lVert\vect a\rVert^2$ é nulo em $\vect a=0$ e o
+primeiro QP não veria limite nenhum); a da velocidade é branda, com penalidade exata
+$\rho\,s+\tfrac{\rho}{2}s^2$ na folga $s$ (\code{velocity\_penalty}). A solução anterior,
+deslocada de um estágio, inicializa o ciclo seguinte.
+\begin{atencao}[title={Grade de tempo no acados}]
+Os passos $\Delta_k$ mudam com o \emph{jitter} do ciclo. O integrador só lê o passo no
+\code{ocp\_nlp\_precompute}; por isso \code{acados::Solver::setTimeSteps} chama o
+\code{precompute} depois de \code{update\_time\_steps}. Sem isso todos os estágios ficavam com o
+passo da criação, e o horizonte encolhia de \SI{1}{s} para \SI{0,5}{s}.
+\end{atencao}
+
+\subsection{Referência}
+Estado inicial $s_0=[\vect 0,\ \vect v_{ref}]$ (posição relativa ao próprio drone). O
+alvo é extrapolado, $\rr_k=\rr+\vect v_t t_k$, e o ponto de referência fica sobre a LOS
+\emph{prevista} (\code{predict\_los}):
+\begin{equation}
+  \vect p_{ref,k} = \rr_k - d\,\hat{\vect l}_k,\qquad
+  \hat{\vect l}_k = \frac{\rr_k - \vect p_{c,k}}{\lVert\rr_k-\vect p_{c,k}\rVert},
+\end{equation}
+em que $\vect p_{c,k}$ é a trajetória que o próprio MPC previu no ciclo anterior. A
+velocidade de referência considera \textbf{só} a rotação da LOS causada pelo alvo
+(correção do \cref{cap:caso}):
+\begin{equation}
+  \vect v_{ref,k} = \vect v_t - \frac{d}{\max(\lVert\rr_k-\vect p_{c,k}\rVert,\,d)}
+  \left(\vect I-\hat{\vect l}_k\hat{\vect l}_k\T\right)\vect v_t .
+\end{equation}
+
+\section{Equivalência linear e cálculo dos ganhos}
+Sem restrições ativas e com LOS congelada, o MPC é uma lei \textbf{linear}
+$u_0 = -K_{MPC}\,x_0$, em que $K_{MPC}$ é a primeira linha de $H^{-1}F$ ($g=Fx_0$). Para o
+\code{yaml} ($N=10$, $g=1{,}15$, $Q=\mathrm{diag}(10,2)$, $r=0{,}5$, $w_N=2$):
+\begin{equation}
+  K_{MPC} = [2{,}16,\ 2{,}06]\qquad(\text{contra } K_{LQR}=[4{,}09,\ 3{,}39]).
+\end{equation}
+O MPC é mais ``suave'' que o LQR com os mesmos pesos porque o horizonte (\SI{1}{s}) é
+curto em relação à constante de tempo da malha: o otimizador ``não vê'' o custo
+acumulado depois de $T_H$. Esse $K_{MPC}$ permite aplicar ao MPC as ferramentas dos
+capítulos anteriores (LGR, margens; \cref{tab:margens}).
+
+\paragraph{Como o horizonte e os pesos mudam $K_{MPC}$.}
+\begin{itemize}
+  \item $N\to\infty$ (ou $T_H\gg t_s$): $K_{MPC}\to K_{LQR}$. Há um teste unitário para
+        isso (\code{MatchesLqrDirectionForLongHorizon}).
+  \item \textbf{Peso terminal ótimo:} com $Q_N=P$ (solução da DARE), o MPC sem
+        restrições é \emph{idêntico} ao LQR para qualquer $N$, e a estabilidade em malha
+        fechada fica garantida (teoria de MPC com custo terminal, Mayne et al.). É uma
+        melhoria simples e bem fundamentada para o TCC: trocar
+        \code{terminal\_weight} escalar por $P$ da DARE.
+  \item Diminuir $r$ ou aumentar $q_p$ aumenta $K_{MPC}$ (mais agressivo), exatamente
+        como no LQR.
+\end{itemize}
+
+\begin{receita}
+\textbf{MPC (\code{matlab/projeto\_mpc.m}).}
+\begin{enumerate}
+  \item Comece pelos pesos do LQR projetado (\cref{cap:lqr}).
+  \item Escolha o horizonte: $T_H \ge$ tempo de acomodação desejado (1--\SI{2}{s}).
+        Com grade crescente, $N=10$--$15$ basta.
+  \item Calcule $K_{MPC}$ e verifique a margem com PX4 + atraso.
+  \item Defina \code{max\_acc} e \code{max\_vel} pelos limites físicos e da câmera.
+  \item Confira a convergência: o status do acados deve ser 0 (convergiu); 2 é o limite de
+        iterações (\code{max\_iterations}) e aparece quando muitas restrições ativam juntas.
+  \item Simule nos cenários da comparação (alvo em curva, parando, mais rápido que
+        $v_{max}$) e observe quando as restrições ativam.
+\end{enumerate}
+\end{receita}
+
+\section{MATLAB: três formas de implementar}
+\begin{enumerate}
+  \item \textbf{Do zero} (\code{controladores/ctrl\_mpc.m}): matrizes $S_x,S_u$ e FISTA, uma
+        verificação independente do acados e boa para entender a forma condensada.
+  \item \textbf{quadprog} (Optimization Toolbox): resolve o mesmo QP com restrições
+        lineares. Para a bola $\lVert u\rVert\le a_{max}$ use a caixa $|u_i|\le a_{max}/\sqrt3$
+        ou \code{fmincon}.
+  \item \textbf{MPC Toolbox}: \code{mpcmove} no laço, ou o bloco \emph{MPC Controller} no
+        Simulink, com o objeto criado por
+\begin{lstlisting}[basicstyle=\ttfamily\small]
+mpcobj = mpc(ss(Ad,Bd,eye(2),0,Ts), Ts, N, N);
+mpcobj.Weights.OutputVariables = [sqrt(10) sqrt(2)];
+mpcobj.MV.Min = -3; mpcobj.MV.Max = 3;
+\end{lstlisting}
+\end{enumerate}
+
+\section{Custo computacional}
+O QP tem $3N=30$ variáveis. O tempo de solução é publicado em
+\code{PursuitMetrics.solve\_time\_us}; reporte-o na comparação, porque é um critério
+legítimo de desempenho para embarcar na Pixhawk ou numa \emph{companion computer}.

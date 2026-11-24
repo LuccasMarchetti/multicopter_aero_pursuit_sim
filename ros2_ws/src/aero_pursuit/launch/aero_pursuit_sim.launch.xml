@@ -1,0 +1,217 @@
+<launch>
+  <arg name="world_name" default="lawn"/>
+  <arg name="parent_frame" default="$(var world_name)"/>
+  <arg name="use_sim_time" default="true"/>
+  <!-- Pursuer camera: must match the model inserted by launch_gz_and_drones.sh (same env var) -->
+  <!-- Where the pursuer nodes run: local (this container) or remote (another computer, e.g. the
+       Raspberry Pi: launch/pursuer.launch.xml there; docs/RASPBERRY.md). Remote: tracker,
+       estimator, controller and offboard are not started here; the RGB goes out reduced
+       (image_downscaler). -->
+  <arg name="pursuer_host" default="$(env AERO_PURSUER_HOST local)" description="local | remote"/>
+  <!-- Session replay (GCS): world_replay teleports the models to the poses of a recorded bag;
+       used with pursuer_host:=remote (no pursuer nodes) and record:=false. The scenario status
+       shown is the recorded one, so the live scenario_runner publishes on /scenario/status_live. -->
+  <arg name="replay" default="false" description="true: world_replay (sessão gravada reconstruída no simulador)"/>
+  <arg name="remote_image_scale" default="$(env AERO_REMOTE_IMAGE_SCALE 1.0)" description="Scale of the images (RGB and depth) sent to the remote pursuer; 1.0 = full resolution"/>
+  <arg name="remote_jpeg_quality" default="$(env AERO_REMOTE_JPEG_QUALITY 80)" description="Qualidade JPEG da RGB remota (0 = crua)"/>
+  <let name="local_pursuer" value="$(eval &quot;'$(var pursuer_host)' != 'remote'&quot;)"/>
+  <arg name="dnn_target" default="cpu" description="cpu | opencl | opencl_fp16 (OpenCL do Mesa/rusticl é mais lento que a CPU)"/>
+  <arg name="params_file" default="$(find-pkg-share aero_pursuit)/config/aero_pursuit.yaml"/>
+  <arg name="bridge_config" default="$(find-pkg-share aero_pursuit)/config/gz_bridge_$(var world_name).yaml"/>
+  <arg name="vittrack_model_path"
+       default="$(find-pkg-share aero_pursuit)/models/object_tracking_vittrack_2023sep.onnx"/>
+  <!-- Model TFs: gazebo = PosePublisher + ros_gz_bridge (gz_pose_tf.sh); node = gazebo_tf_bridge -->
+  <arg name="tf_source" default="gazebo" description="gazebo | node"/>
+  <arg name="tf_bridge_config" default="$(find-pkg-share aero_pursuit)/config/gz_bridge_$(var world_name)_tf.yaml"/>
+  <!-- Dataset: records each pursuit session (MCAP rosbag) -->
+  <arg name="record" default="true"/>
+  <arg name="record_mode" default="session" description="session | continuous"/>
+  <arg name="dataset_dir" default="$(env HOME)/aero_pursuit/datasets"/>
+  <arg name="joystick" default="true" description="Driver do joystick para teleoperar o alvo"/>
+  <arg name="joy_driver" default="game_controller_node"
+       description="game_controller_node (layout SDL: 0 LX, 1 LY, 2 RX, 3 RY) | joy_node (layout cru do dispositivo)"/>
+  <!-- Logs: warn silences routine INFO messages (bridge, nodes, joy) -->
+  <arg name="gcs_stream" default="true" description="Streamer de vídeo para a GCS (aero_pursuit_gcs); ocioso sem visualizador"/>
+  <arg name="spectator" default="true" description="Câmera livre do Gazebo na GCS (vista Gazebo); só renderiza com a vista aberta"/>
+  <!-- Scenarios (scenarios/*.yaml): scenario_runner is always available; with `scenario`, it loads and starts by itself -->
+  <arg name="scenario" default="" description="Arquivo de cenário a executar na partida (relativo a scenario_dir)"/>
+  <arg name="scenario_variant" default="" description="Rótulo da execução (estudos)"/>
+  <arg name="scenario_dir" default="$(env HOME)/aero_pursuit/scenarios"/>
+  <arg name="log_level" default="warn" description="debug | info | warn | error"/>
+  <arg name="output" default="screen" description="screen | log (only files in ~/.ros/log)"/>
+  <arg name="opencv_log_level" default="ERROR" description="SILENT | FATAL | ERROR | WARNING | INFO"/>
+  <!-- Debugging: the container starts under gdbserver (attach from VS Code: 'gdbserver :3000') -->
+  <arg name="debug" default="false"/>
+  <arg name="gdb_port" default="3000"/>
+  <arg name="container_prefix"
+       default="$(eval &quot;'gdbserver localhost:$(var gdb_port)' if '$(var debug)' == 'true' else ''&quot;)"
+       description="Prefixo do processo do container (ex.: 'valgrind', 'gdb -ex run --args')"/>
+
+  <!-- Camera TFs: base -> gimbal_mount (static pivot); gimbal_node publishes gimbal_mount -> camera_link
+       from the measured pitch (a "fixed" camera is the gimbal held at pitch_deg). -->
+  <node pkg="tf2_ros" exec="static_transform_publisher" name="gimbal_mount_tf" output="$(var output)"
+        args="--x 0.15 --y 0.03 --z 0.165 --frame-id x500_depth_0 --child-frame-id gimbal_mount"
+        ros_args="--log-level $(var log_level)"/>
+  <node pkg="tf2_ros" exec="static_transform_publisher" name="camera_optical_tf" output="$(var output)"
+        args="--roll -1.5707963 --yaw -1.5707963 --frame-id camera_link --child-frame-id camera_optical"
+        ros_args="--log-level $(var log_level)"/>
+
+  <node pkg="joy" exec="$(var joy_driver)" name="joy_node" if="$(var joystick)" output="$(var output)"
+        ros_args="--log-level $(var log_level)"/>
+
+  <!--
+    Single container (multi-threaded): bridge, vision, estimation, control and TF in the same
+    process. Bridge and vision use intra-process communication => images without
+    DDS serialization.
+  -->
+  <node_container pkg="rclcpp_components" exec="component_container_mt"
+                  name="aero_pursuit_container" namespace="" output="$(var output)"
+                  launch-prefix="$(var container_prefix)"
+                  ros_args="--log-level $(var log_level)">
+    <!--
+      RosGzBridge segfaults on shutdown when its library is unloaded
+      (dlclose) with gz-transport threads still alive, bringing the container down
+      before session_recorder closes the rosbag. Preloaded, it is never unloaded.
+    -->
+    <env name="LD_PRELOAD" value="$(find-pkg-prefix ros_gz_bridge)/lib/libros_gz_bridge.so"/>
+    <env name="OPENCV_LOG_LEVEL" value="$(var opencv_log_level)"/>
+
+    <composable_node pkg="ros_gz_bridge" plugin="ros_gz_bridge::RosGzBridge" name="gz_bridge" namespace="">
+      <param name="config_file" value="$(var bridge_config)"/>
+      <extra_arg name="use_intra_process_comms" value="true"/>
+    </composable_node>
+
+    <!-- Native Gazebo TFs: Pose_V (PosePublisher) -> tf2_msgs/TFMessage on /tf -->
+    <composable_node pkg="ros_gz_bridge" plugin="ros_gz_bridge::RosGzBridge" name="gz_tf_bridge" namespace=""
+                     if="$(eval &quot;'$(var tf_source)' == 'gazebo'&quot;)">
+      <param name="config_file" value="$(var tf_bridge_config)"/>
+    </composable_node>
+
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::GazeboTfBridgeNode" name="gazebo_tf_bridge" namespace=""
+                     if="$(eval &quot;'$(var tf_source)' == 'node'&quot;)">
+      <param from="$(var params_file)"/>
+      <param name="world_name" value="$(var world_name)"/>
+      <param name="world_frame" value="$(var parent_frame)"/>
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+    </composable_node>
+
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::VisionTrackerNode" name="vision_tracker_node" namespace=""
+                     if="$(var local_pursuer)">
+      <param from="$(var params_file)"/>
+      <param name="vittrack_model_path" value="$(var vittrack_model_path)"/>
+      <param name="dnn_target" value="$(var dnn_target)"/>
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+      <extra_arg name="use_intra_process_comms" value="true"/>
+    </composable_node>
+
+    <!-- Remote pursuer: RGB as JPEG and depth as PNG (the raw images never leave this process) -->
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::ImageDownscalerNode" name="image_downscaler" namespace=""
+                     unless="$(var local_pursuer)">
+      <param name="scale" value="$(var remote_image_scale)"/>
+      <param name="depth_scale" value="$(var remote_image_scale)"/>
+      <param name="jpeg_quality" value="$(var remote_jpeg_quality)"/>
+      <param name="depth_png_level" value="1"/>
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+      <extra_arg name="use_intra_process_comms" value="true"/>
+    </composable_node>
+    <!-- Poses of every frame in the world for the GCS (one message at 30 Hz instead of /tf + /clock). -->
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::GcsTelemetryNode" name="gcs_telemetry" namespace=""
+                     if="$(var gcs_stream)">
+      <param name="world_frame" value="$(var parent_frame)"/>
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+    </composable_node>
+
+    <!-- Video for the GCS: intra-process with ros_gz_bridge (no image copy). -->
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::VideoStreamerNode" name="video_streamer" namespace=""
+                     if="$(var gcs_stream)">
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+      <extra_arg name="use_intra_process_comms" value="true"/>
+    </composable_node>
+
+    <!-- Second video channel: free camera (socket video_spectator.sock). -->
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::VideoStreamerNode" name="video_streamer_spectator" namespace=""
+                     if="$(eval &quot;'$(var gcs_stream)' == 'true' and '$(var spectator)' == 'true'&quot;)">
+      <param name="channel" value="spectator"/>
+      <param name="default_topic" value="/spectator/image"/>
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+      <extra_arg name="use_intra_process_comms" value="true"/>
+    </composable_node>
+
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::SpectatorCameraNode" name="spectator_camera" namespace=""
+                     if="$(var spectator)">
+      <param name="world_name" value="$(var world_name)"/>
+      <param name="world_frame" value="$(var parent_frame)"/>
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+    </composable_node>
+
+    <!-- Scenarios: target path, staging and repetitions -->
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::ScenarioRunnerNode" name="scenario_runner" namespace="">
+      <param from="$(var params_file)"/>
+      <param name="world_name" value="$(var world_name)"/>
+      <param name="world_frame" value="$(var parent_frame)"/>
+      <param name="scenario_dir" value="$(var scenario_dir)"/>
+      <param name="autostart_file" value="$(var scenario)"/>
+      <param name="variant" value="$(var scenario_variant)"/>
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+      <remap from="/scenario/status" to="$(eval &quot;'/scenario/status_live' if '$(var replay)' == 'true' else '/scenario/status'&quot;)"/>
+    </composable_node>
+
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::WorldReplayNode" name="world_replay" namespace=""
+                     if="$(var replay)">
+      <param name="world_name" value="$(var world_name)"/>
+      <param name="world_frame" value="$(var parent_frame)"/>
+    </composable_node>
+
+    <!-- Automatic target acquisition (ROI from ground truth) and tracking ground truth -->
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::TargetAcquisitionNode" name="target_acquisition" namespace="">
+      <param from="$(var params_file)"/>
+      <!-- Remote pursuer: the ROI goes in the pixels of the reduced image the tracker receives -->
+      <param name="camera_info_topic"
+             value="$(eval &quot;'/camera/remote/camera_info' if '$(var pursuer_host)' == 'remote' else '/camera/camera_info'&quot;)"/>
+      <param name="world_frame" value="$(var parent_frame)"/>
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+    </composable_node>
+
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::TargetEstimatorNode" name="target_estimator_node" namespace=""
+                     if="$(var local_pursuer)">
+      <param from="$(var params_file)"/>
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+      <param name="world_frame" value="$(var parent_frame)"/>
+    </composable_node>
+
+    <!-- Pitch gimbal: joints over ROS (gz bridge) + gimbal_node (camera TF, pointing law). -->
+    <composable_node pkg="ros_gz_bridge" plugin="ros_gz_bridge::RosGzBridge" name="gz_gimbal_bridge" namespace=""
+>
+      <param name="config_file" value="$(find-pkg-share aero_pursuit)/config/gz_bridge_$(var world_name)_gimbal.yaml"/>
+    </composable_node>
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::GimbalNode" name="gimbal" namespace=""
+                     if="$(var local_pursuer)">
+      <param from="$(var params_file)"/>
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+    </composable_node>
+
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::PursuitControllerNode" name="pursuit_controller_node" namespace=""
+                     if="$(var local_pursuer)">
+      <param from="$(var params_file)"/>
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+    </composable_node>
+
+    <!-- Offboard heartbeat in wall time (independent of /clock) -->
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::OffboardControlNode" name="offboard_control" namespace=""
+                     if="$(var local_pursuer)">
+      <param from="$(var params_file)"/>
+    </composable_node>
+
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::JoyTeleopNode" name="drone_joy_teleop" namespace="">
+      <param from="$(var params_file)"/>
+    </composable_node>
+
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::SessionRecorderNode" name="session_recorder" namespace=""
+                     if="$(var record)">
+      <param from="$(var params_file)"/>
+      <param name="output_dir" value="$(var dataset_dir)"/>
+      <param name="record_mode" value="$(var record_mode)"/>
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+    </composable_node>
+  </node_container>
+</launch>

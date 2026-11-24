@@ -1,0 +1,222 @@
+# aero_pursuit node parameters (override the code defaults).
+
+vision_tracker_node:
+  ros__parameters:
+    image_topic: /camera
+    camera_info_topic: /camera/camera_info
+    depth_topic: /depth_camera
+    depth_info_topic: /depth_camera/camera_info
+    target_topic: /target_3d_position
+    bearing_topic: /target_bearing       # Fallback without depth (line of sight)
+    detection_topic: /target_detection   # Bounding box + score per frame (dataset)
+    camera_frame: camera_optical
+    vittrack_model_path: ""       # Vazio: share/aero_pursuit/models/object_tracking_vittrack_2023sep.onnx
+    dnn_target: cpu               # cpu | opencl | opencl_fp16 (start-up only). RX 6600/rusticl: CPU ~24 Hz, OpenCL ~14 Hz
+    tracking_score_threshold: 0.35
+    min_consecutive_frames: 5
+    sync_slop_sec: 0.05           # Max. difference between the RGB and the closest depth frame [s]
+    depth_buffer_size: 10         # Depth frames kept for stamp matching
+    depth_percentile_lower: 10.0
+    depth_percentile_upper: 30.0
+    depth_fallback_enabled: true  # No depth points => publishes the line of sight
+    # Depth camera range (OakD-Lite StereoOV7251, clip of the PX4 SDF). Measured in
+    # Gazebo: beyond far the pixel is +inf. With the ROI ≥ depth_beyond_fraction beyond far, the
+    # fallback publishes range_lower_bound = depth_max_range (the target is FARTHER than that).
+    depth_min_range: 0.2          # [m]
+    depth_max_range: 19.1         # [m]
+    depth_beyond_fraction: 0.85
+    # Physical consistency verifier (perception/track_verifier.*, docs/estudo_rastreamento): drops the
+    # frames where the box drifted to the background/another object (nothing is published).
+    verifier:
+      enabled: true
+      depth_check: true           # no depth jump beyond v_max·Δt, no jump "beyond range"
+      scale_check: true           # ROI angular size × learned size × range
+      appearance_check: true
+      appearance_min: 0.35
+      score_check: false
+      box_check: true             # ROI side > max_box_fraction of the image (ViT box over the whole frame)
+      max_box_fraction: 0.5
+      fail_frames: 3              # inconsistent frames in a row => hold
+      hold_time: 3.0              # [s] hold waiting for the tracker to find the target again; then stop
+                                  # (auto acquisition re-acquires). 0: stop at once (study 2026-11-07)
+      recover_frames: 5           # consistent frames in a row that end the hold
+    max_processing_rate_hz: 0.0  # 0: processes every RGB frame (no limit)
+    debug_image_topic: /camera/segmented_bb   # + /compressed (JPEG)
+    debug_image_resize: true      # false: sends the original resolution to Foxglove
+    debug_image_scale: 0.5        # Scale when resize=true (clicks are read at this scale)
+    debug_image_rate_hz: 15.0     # 0: no limit. 15 Hz JPEG ~= 3-5 Mbit/s (remote use)
+    debug_jpeg_quality: 60        # Lower => less Foxglove bandwidth
+
+target_estimator_node:
+  ros__parameters:
+    input_topic: /target_3d_position
+    output_topic: /target_3d_state_filtered
+    base_frame: x500_depth_0
+    enu_frame: x500_depth_0_enu
+    estimate_frame: target_estimate
+    default_target_frame: X4
+    use_tf_tracking: false
+    kf_model: cv                      # cv | singer (target acceleration as Gauss-Markov state)
+    process_noise_std: 0.5            # TARGET acceleration (the pursuer's enters as a known input)
+    singer:                           # kf_model: singer
+      accel_std: 1.0                  # sigma_a: stationary target acceleration [m/s²]
+      accel_tau: 1.0                  # tau: acceleration correlation time [s]
+    omniscient_accel_window: 0.0      # Omniscient accel: 0 = raw 2nd difference; > 0 = quadratic LSQ window [s]
+    compensate_chaser_motion: true    # Pursuer velocity (/fmu/out/vehicle_odometry) as KF input
+    measurement_noise_std: 0.1          # Margin for depth noise (less aggressive gating)
+    reset_timeout: 1.0
+    gating_chi2: 16.27            # 0 disables outlier rejection
+    max_gate_rejections: 5
+    tf_lookup_rate: 30.0
+    enu_tf_rate: 50.0
+
+pursuit_controller_node:
+  ros__parameters:
+    # All parameters below (except dt) can be changed at runtime, e.g.:
+    #   ros2 param set /pursuit_controller_node mpc.params.q_px 20.0
+    # Output: TrajectorySetpoint (velocity + acceleration feedforward + heading) to the PX4.
+    dt: 0.05
+    target_distance: 5.0
+    max_vel: 2.0                  # Safety: |v| commanded to the PX4 is saturated here [m/s]
+    max_acc_xy: 8.0               # Safety: |horizontal acceleration| sent to the PX4 [m/s²] (the MPC bounds each axis)
+    min_altitude: 3.0             # Safety floor above the takeoff point [m] (0: off): the target may sink to the ground
+    coast_timeout: 0.3            # [s] estimativa recente => TRACKING
+    lost_timeout: 1.5             # [s] after this => LOST (pursuit disabled)
+    bearing_timeout: 0.5          # [s] recent bounding box => APPROACH (no depth: the MPC gets only the box)
+    target_accel:                 # Estimated target acceleration (/target_3d_accel_filtered)
+      enabled: false
+      tau: 1.0                    # Singer decay given to the law (PursuitState::accel_tau) [s]
+      max: 5.0                    # |a| clamp [m/s²]
+      timeout: 0.5                # [s]
+    camera_base_frame: x500_depth_0   # Camera mount (TF), only for the image metrics
+    camera_frame: gimbal_mount          # + the measured gimbal pitch (/gimbal/joint_states)
+    # Weights and limits of the MPC (control/mpc.cpp, acados/pursuit_ocp.py). The GCS tab
+    # "Control" edits them at run time as `mpc.params.<name>`; a name removed there falls back
+    # to the default compiled from pursuit_ocp.py.
+    #   q_p*: relative position error  (p_rel - standoff along the line of sight)
+    #   q_v*: relative velocity error  (v_rel -> 0: match the target velocity)
+    #   r_a*: pursuer acceleration     (effort)
+    #   q_f:  terminal weight factor   (W_e = q_f * diag(q_p, q_v))
+    #   a_max_xy / a_max_z: |a| bound per axis [m/s²]
+    #   ref_horizontal: 1 = standoff along the horizontal line of sight, same altitude as the
+    #                   target; 0 = along the 3D line of sight (altitude free)
+    #   N, dt: horizon steps and step [s] of the solver (a new pair is compiled at run time)
+    #   yaw_mode: 0 no heading control | 1 LOS heading tracking (atan2 of the previous plan) |
+    #             2 LOS heading tracking + visibility constraint | 3 perception-aware (PAMPC: the
+    #             relative heading optimized in the solver) | 4 perception-aware + visibility constraint
+    #   q_psi, r_r: heading error / yaw rate weights; r_max: |r| bound [rad/s]
+    #   fov_deg, fov_margin_deg: camera horizontal field of view and the margin kept free per side
+    #   w_fov: slack penalty of the visibility constraint (yaw_mode 2, 4)
+    mpc:
+      params:
+        yaw_mode: 0.0
+        q_psi: 5.0
+        r_r: 0.5
+        r_max: 1.2
+        fov_deg: 69.0
+        fov_margin_deg: 8.0
+        w_fov: 200.0
+        N: 20.0
+        dt: 0.1
+        ref_horizontal: 1.0
+        q_px: 10.0
+        q_py: 10.0
+        q_pz: 10.0
+        q_vx: 1.0
+        q_vy: 1.0
+        q_vz: 1.0
+        r_ax: 0.5
+        r_ay: 0.5
+        r_az: 0.5
+        q_f: 5.0
+        a_max_xy: 3.0
+        a_max_z: 2.0
+
+gimbal:                           # pursuer camera gimbal (gimbal_node; pitch only; both simulators)
+  ros__parameters:
+    auto_pitch: false             # GCS check box: false = fixed camera (held at pitch_deg), true = point at the target
+    pitch_deg: 0.0                # manual angle (+ = up) [deg]
+    max_rate_deg: 90.0            # [deg/s]
+    min_deg: -90.0                # command range; the x500_gimbal_depth joint stops (-109 .. 46 deg) stay clear of it
+    max_deg: 30.0
+    target_timeout: 0.5           # [s] without a target: hold the last command
+    mount_xyz: [0.15, 0.03, 0.165]   # gimbal pivot in the body (same as the gimbal_mount TF)
+
+scenario_runner:
+  ros__parameters:
+    rate_hz: 20.0
+    # Drone model catalog: "<key>:<folder in gz_models>:<bounding radius [m]>"
+    model_catalog: ["x3:x3:0.35", "x4:x4:0.45", "tiltrotor:tiltrotor:0.6", "x5:x5:0.4"]
+    # Base-world drones (launch_gz_and_drones.sh): "<name>:<catalog key>:<x>:<y>:<z>". Service
+    # ~/set_drones (GCS Drones tab) removes the unchecked ones / re-inserts the checked missing ones.
+    base_drones: ["X3:x3:5:2:1", "X4:x4:5:-2:1", "Tiltrotor:tiltrotor:5:-4:1", "X5:x5:5:4:1"]
+    target_speed: 0.0             # Pursued drone speed along its plan [m/s]; 0 = the plan's (or the scenario target_speed); live
+    transit_speed: 3.0            # [m/s] up to the start of a distant leg
+    transit_threshold: 1.5        # [m]
+    position_gain: 1.2            # Position feedback of the reference follower [1/s]
+    yaw_gain: 1.5
+    max_yaw_rate: 1.2             # [rad/s]
+    pursuer_max_speed: 4.0        # Pursuer staging/patrol [m/s]
+    publish_tf: true              # TFs of the drones inserted by the scenario
+
+target_acquisition:
+  ros__parameters:
+    enabled: false                # true: always automatic acquisition (outside scenarios)
+    follow_scenario: true         # Active with the scenario in RUNNING (acquisition: auto, detection: vision)
+    target_frame: X4
+    reacquire: true
+    reacquire_delay: 1.0          # [s] between tracker initializations
+    min_box_px: 12.0              # A target narrower than this in the image is not acquired
+    margin_px: 8.0
+    max_range: 60.0               # [m]
+    box_scale: 1.10               # ROI margin around the projected box (TrackerVit context)
+    height_ratio: 0.5             # Sphere fallback: height/width (models without model_boxes)
+    use_image_stamp: true         # TFs at the frame instant (camera_info), not the latest ones
+    # Oriented box per model (fnmatch pattern: center cx cy cz and edges sx sy sz in m, model
+    # frame), of the VISIBLE geometry (the thin blades barely show). The 8 corners are projected
+    # with the target attitude. X4 calibrated by segmentation (probe_acquisition --frames): the visible
+    # center is 0.11 m above the model origin.
+    model_boxes: "x500*: 0 0 -0.03 0.45 0.45 0.39; X3*: 0 0 0.04 0.47 0.47 0.12; X4*: 0 0 0.09 0.58 0.62 0.20; Tiltrotor*: 0 0 -0.03 0.95 2.15 0.30; X5*: 0 0 -0.03 0.45 0.45 0.39"
+    candidate_frames: [X3, X4, Tiltrotor, X5]   # + scenario drones (tracked identity)
+
+offboard_control:
+  ros__parameters:
+    takeoff_altitude: 5.0
+    takeoff_tolerance: 0.5
+    setpoint_timeout: 0.5         # [s] without external setpoints => HOLD at the current position
+    attitude_setpoint_timeout: 0.25  # [s] same for attitude setpoints (dynamic MPC)
+    rate_hz: 20.0
+    acceleration_feedforward: true   # false: acceleration = NaN (PX4 "no feedforward" variant)
+
+session_recorder:
+  ros__parameters:
+    output_dir: ""                # Vazio: ~/aero_pursuit/datasets
+    record_mode: session          # session (one bag per pursuit) | continuous
+    storage_id: mcap
+    pre_roll_sec: 2.0             # Also records the seconds before engagement
+    post_roll_sec: 3.0            # Keeps recording after leaving TRACKING/APPROACH
+    extra_topics: [""]            # Ex.: ["/camera", "/depth_camera"] (pesado)
+
+gazebo_tf_bridge:
+  ros__parameters:
+    models: [x500_depth_0, X3, X4, Tiltrotor, X5]
+    max_rate_hz: 60.0
+    use_sim_stamp: true
+
+drone_joy_teleop:
+  ros__parameters:
+    target_vehicles: [X4, X3, Tiltrotor, X5]            # Targets (Twist in Gazebo); LB/RB cycles targets -> pursuer
+    target_topic_pattern: /{name}/gazebo/command/twist
+    idle_silence: true                              # Neutral sticks publish nothing (do not fight scenarios)
+    chaser_topic: /offboard/trajectory_setpoint     # Pursuer (velocity via offboard_control)
+    # game_controller_node layout (raw joy_node: LB 4, RB 5, LT 2, RT 5, released 1.0)
+    button_previous_vehicle: 9    # LB
+    button_next_vehicle: 10       # RB
+    axis_speed_down: 4            # LT
+    axis_speed_up: 5              # RT
+    trigger_released_value: 0.0
+    trigger_pressed_value: -1.0
+    speed_scale_min: 0.1
+    speed_scale_max: 2.0
+    speed_scale_rate: 0.5         # [1/s] with the trigger fully pressed
+    pause_pursuit_on_chaser: true

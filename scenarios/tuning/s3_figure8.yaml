@@ -1,0 +1,19 @@
+name: s3_figure8
+description: 'Option A S3: 10 m lemniscate (continuous curvature)'
+duration: 45
+target:
+  start: [8, 0, 1]
+  path:
+  - trajectory: oito
+    loops: 0
+pursuer:
+  start: [0, 0, 5]
+  detection: vision
+  acquisition: auto
+  start_after: 2
+trajectories:
+  oito:
+    type: figure8
+    center: [18, 0, 6]
+    size: [10, 5, 0.5]
+    speed: 2.0

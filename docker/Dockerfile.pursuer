@@ -1,0 +1,127 @@
+# syntax=docker/dockerfile:1
+# Pursuer-only image (no Gazebo, no PX4, no GCS): the on-board nodes of aero_pursuit
+# (tracker, estimator, controller, gimbal over ROS topics, PX4 offboard), built with AERO_SIM=OFF.
+# Multi-architecture (arm64 Raspberry Pi 5, amd64, ...): the base image is multi-arch and every
+# dependency is built from source or installed from apt. Build context = the staged folder made by
+# docker/pursuer.sh (docker/Dockerfile.pursuer, ros2_ws/src/{aero_pursuit,px4_msgs}).
+#
+#   docker/pursuer.sh build|run|shell|stop [host]      (docs/RASPBERRY.md)
+#
+# Stages:
+#   base    ROS 2 base + build tools and the libraries the pursuer links
+#   opencv  OpenCV 4.9 with cv::TrackerVit (same modules as docker/Dockerfile)
+#   build   px4_msgs + aero_pursuit (AERO_SIM=OFF)
+#   runtime base + OpenCV + install/ (no sources, no build tree)
+
+ARG ROS_DISTRO=jazzy
+
+FROM ros:${ROS_DISTRO}-ros-base AS base
+ARG ROS_DISTRO
+ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake git python3-colcon-common-extensions libeigen3-dev libyaml-cpp-dev \
+      ros-${ROS_DISTRO}-tf2-eigen ros-${ROS_DISTRO}-eigen3-cmake-module \
+      ros-${ROS_DISTRO}-rosbag2-storage-mcap ros-${ROS_DISTRO}-rmw-fastrtps-cpp \
+ && rm -rf /var/lib/apt/lists/*
+
+FROM base AS opencv
+ARG OPENCV_VERSION=4.9.0
+RUN git clone --depth 1 -b ${OPENCV_VERSION} https://github.com/opencv/opencv.git /src/opencv \
+ && cmake -S /src/opencv -B /src/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DBUILD_LIST=core,imgproc,imgcodecs,video,dnn,calib3d,features2d,flann \
+      -DWITH_OPENCL=OFF -DWITH_FFMPEG=OFF -DWITH_GSTREAMER=OFF -DWITH_GTK=OFF -DWITH_QT=OFF \
+      -DWITH_TIFF=OFF -DWITH_WEBP=OFF -DWITH_OPENEXR=OFF -DWITH_JASPER=OFF -DWITH_OPENJPEG=OFF \
+      -DBUILD_JPEG=ON -DBUILD_PNG=ON -DBUILD_ZLIB=ON -DBUILD_PROTOBUF=ON \
+      -DBUILD_TESTS=OFF -DBUILD_PERF_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_opencv_apps=OFF \
+      -DBUILD_JAVA=OFF -DBUILD_opencv_python3=OFF -DOPENCV_GENERATE_PKGCONFIG=ON \
+ && cmake --build /src/build -j"$(nproc)" && cmake --install /src/build \
+ && rm -rf /src
+
+# acados: MPC solvers + CasADi code generator (ros2_ws/install_acados.sh); only lib/ at run time.
+FROM base AS acados
+RUN apt-get update && apt-get install -y --no-install-recommends python3-venv curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+COPY ros2_ws/install_acados.sh /tmp/install_acados.sh
+RUN bash /tmp/install_acados.sh /opt/acados && rm -rf /opt/acados/build /opt/acados/.git
+
+FROM base AS build
+ARG ROS_DISTRO
+COPY --from=opencv /usr/local /usr/local
+COPY --from=acados /opt/acados /opt/acados
+ENV ACADOS_ROOT=/opt/acados
+RUN ldconfig
+COPY ros2_ws/src/px4_msgs /ws/src/px4_msgs
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh && cd /ws \
+ && colcon build --merge-install --install-base /opt/aero --packages-select px4_msgs \
+      --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+COPY ros2_ws/src/aero_pursuit /ws/src/aero_pursuit
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh && . /opt/aero/setup.sh && cd /ws \
+ && colcon build --merge-install --install-base /opt/aero --packages-select aero_pursuit \
+      --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DAERO_SIM=OFF
+# MPC (N, dt) variants besides the default one, compiled here: the runtime image has no acados
+# code generator, so the node could not build them when the GCS / a study asks for them. Same
+# folder the node looks in (~/.cache/aero_pursuit/acados/<name>_<hash>, control/acados_variants.cpp).
+ARG ACADOS_VARIANTS="50:0.05"
+RUN hash=$(cut -c1-12 /opt/aero/share/aero_pursuit/acados/acados_variant_hash) \
+ && for v in ${ACADOS_VARIANTS}; do \
+      n=${v%%:*}; dt=${v##*:}; ms=$(python3 -c "print(round(${dt} * 1000))"); \
+      name=pursuit_mpc_N${n}_dt${ms}; \
+      echo "== variant ${name}"; \
+      ACADOS_SOURCE_DIR=/opt/acados /opt/acados/venv/bin/python -W ignore \
+        /opt/aero/share/aero_pursuit/acados/generate.py /root/.cache/aero_pursuit/acados/${name}_${hash} \
+        --N ${n} --dt ${dt} \
+      && test -f /root/.cache/aero_pursuit/acados/${name}_${hash}/${name}/libacados_ocp_solver_${name}.so \
+      || exit 1; \
+    done
+
+FROM base AS runtime
+ARG ROS_DISTRO
+COPY --from=opencv /usr/local /usr/local
+COPY --from=acados /opt/acados/lib /opt/acados/lib
+COPY --from=build /opt/aero /opt/aero
+COPY --from=build /root/.cache/aero_pursuit /root/.cache/aero_pursuit
+RUN ldconfig \
+ && printf '#!/bin/bash\nset -e\n. /opt/ros/%s/setup.bash\n. /opt/aero/setup.bash\nexec "$@"\n' "${ROS_DISTRO}" \
+      > /usr/local/bin/aero-entrypoint && chmod +x /usr/local/bin/aero-entrypoint
+ENV ROS_DISTRO=${ROS_DISTRO} RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+ENTRYPOINT ["/usr/local/bin/aero-entrypoint"]
+CMD ["ros2", "launch", "aero_pursuit", "pursuer.launch.xml"]
+
+# ------------------------------------------------------------------------------------------
+# Isaac Sim host (docs/ISAAC_SIM.md, isaac/host.sh build): the pursuer image plus the world side
+# that does not need Gazebo: Micro-XRCE-DDS agent (PX4 SITL of Pegasus), scenario runner over
+# ROS topics (world_backend:=ros), recorder, GCS and foxglove_bridge.  docker build --target isaac
+FROM base AS xrce
+ARG XRCE_REF=v2.4.3
+RUN git clone -q --depth 1 -b ${XRCE_REF} https://github.com/eProsima/Micro-XRCE-DDS-Agent.git /src/xrce \
+ && cmake -S /src/xrce -B /src/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/xrce \
+ && cmake --build /src/build -j"$(nproc)" && cmake --install /src/build && rm -rf /src
+
+# aero_pursuit again with the GCS video streamer (GStreamer, -DAERO_GCS_VIDEO=ON): colcon reuses
+# the build tree of the build stage and compiles only the streaming targets. Then the GCS.
+FROM build AS gcs-build
+ARG ROS_DISTRO
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+ && rm -rf /var/lib/apt/lists/*
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh && . /opt/aero/setup.sh && cd /ws \
+ && colcon build --merge-install --install-base /opt/aero --packages-select aero_pursuit \
+      --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DAERO_SIM=OFF -DAERO_GCS_VIDEO=ON
+COPY ros2_ws/src/aero_pursuit_gcs /ws/src/aero_pursuit_gcs
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh && . /opt/aero/setup.sh && cd /ws \
+ && colcon build --merge-install --install-base /opt/aero --packages-select aero_pursuit_gcs
+
+# GStreamer runtime of the streamer (x264/JPEG on the CPU: no NVIDIA toolkit in Docker there),
+# h264parse (plugins-bad), openssl (GCS HTTPS certificate).
+FROM runtime AS isaac
+ARG ROS_DISTRO
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ros-${ROS_DISTRO}-foxglove-bridge ros-${ROS_DISTRO}-tf2-ros ros-${ROS_DISTRO}-tf2-tools \
+      python3-aiohttp python3-yaml python3-numpy python3-matplotlib iproute2 procps \
+      libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 gstreamer1.0-plugins-base \
+      gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly openssl \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=xrce /opt/xrce /usr/local
+COPY --from=gcs-build /opt/aero /opt/aero
+RUN ldconfig
+CMD ["ros2", "launch", "aero_pursuit", "isaac_world.launch.xml"]

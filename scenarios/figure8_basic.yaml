@@ -1,0 +1,19 @@
+name: figure8_basic
+description: X4 em oito, perseguidor com visão e aquisição automática
+duration: 90
+target:
+  start: [5, -2, 1]
+  path:
+  - trajectory: oito
+    loops: 0
+pursuer:
+  start: [0, 0, 5]
+  detection: vision
+  acquisition: auto
+  start_after: 2
+trajectories:
+  oito:
+    type: figure8
+    center: [22, 0, 7]
+    size: [12, 6, 1]
+    speed: 2.5

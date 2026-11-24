@@ -1,0 +1,21 @@
+# GCS of `aero` in docker mode (docs/COMANDOS.md), on top of compose.yaml: the container
+# aero-gcs runs in the background and drives Gazebo inside itself or Isaac Sim on the host
+# through the host agent (isaac/host_agent.py). Started by `aero gcs start` (docker/aero.sh up).
+services:
+  aero:
+    container_name: aero-gcs
+    init: false                 # pid host: tini would not be PID 1
+    pid: host                   # process panel sees Isaac, PX4 and the aero-isaac container
+    environment:
+      AERO_GCS_NAME: ${AERO_GCS_NAME:-}
+      # Isaac state of the host (isaac/host.sh): agent socket, logs, and the video sockets the
+      # aero-isaac container shares with the GCS (XDG_RUNTIME_DIR, same folder on both).
+      AERO_ISAAC_STATE: /home/aero/.local/state/aero/isaac
+      AERO_ISAAC_AGENT: /home/aero/.local/state/aero/isaac/run/host.sock
+      XDG_RUNTIME_DIR: /home/aero/.local/state/aero/isaac/run
+    volumes:
+      - ${AERO_ISAAC_STATE:-~/.local/state/aero/isaac}:/home/aero/.local/state/aero/isaac
+      # Settings, token and certificates on the host (aero gcs token, survives `down -v`).
+      - ${AERO_GCS_CONFIG:-~/.config/aero_gcs}:/home/aero/.config/aero_gcs
+      # Tailscale peers for the GCS directory (/rede, launcher/aero_launcher.py): local API socket.
+      - /var/run/tailscale:/var/run/tailscale

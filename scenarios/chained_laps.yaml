@@ -1,0 +1,49 @@
+name: chained_laps
+description: 'Chained trajectories: square x2, circle + zigzag + hover twice, helix'
+duration: 0
+target:
+  start: [5, -2, 1]
+  path:
+  - trajectory: quadrado
+    loops: 2
+  - circulo
+  - zigue
+  - hover: 2
+  - circulo
+  - zigue
+  - hover: 2
+  - trajectory:
+      type: helix
+      center: [23, 0, 5]
+      radius: 7
+      height: 6
+      turns: 1.5
+      speed: 2.5
+pursuer:
+  start: [0, 0, 5]
+  start_after: 2
+trajectories:
+  quadrado:
+    type: waypoints
+    closed: true
+    speed: 3
+    points:
+    - [15, -8, 6]
+    - [31, -8, 6]
+    - [31, 8, 8]
+    - [15, 8, 8]
+  circulo:
+    type: circle
+    center: [23, 0, 9]
+    radius: 10
+    speed: 3
+  zigue:
+    type: waypoints
+    interpolation: spline
+    speed: 3.5
+    points:
+    - [15, -10, 6]
+    - [20, 6, 8]
+    - [25, -6, 7]
+    - [30, 8, 9]
+    - [35, -4, 6]

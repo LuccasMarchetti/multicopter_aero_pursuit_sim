@@ -1,0 +1,52 @@
+# ==========================================
+# ROS 2 Workspace Build Artifacts
+# ==========================================
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+ros2_ws/src/aero_pursuit/models/*.onnx
+datasets/
+
+# Arquivos temporários do colcon
+.colcon_install_layout
+.colcon_build/
+
+# ==========================================
+# C++ & CMake (se compilar pacotes C++)
+# ==========================================
+*.o
+*.obj
+*.so
+*.a
+*.dylib
+
+# ==========================================
+# Python (se tiver pacotes em Python)
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.egg-info/
+.eggs/
+
+# ==========================================
+# IDEs e Editores
+# ==========================================
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Cache do IntelliSense do VS Code (>1 GB)
+ros2_ws/.vscode/browse.vc.db*
+
+# Simulation logs (sim_manager.sh / launch_gz_and_drones.sh)
+logs/
+
+# Isaac: USD models generated on the GPU computer (isaac/import_gz_models.py)
+isaac/assets/

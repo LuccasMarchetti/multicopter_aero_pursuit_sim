@@ -1,0 +1,64 @@
+# Heading formulation x camera x target speed x standoff distance, on the trajectories listed in
+# `scenarios`. Every combination of one item per axis (2 x 2 x 3 x 2 = 24 variants), 3 runs each:
+# 6 scenarios x 24 x 3 = 432 runs per simulator. Each run ends when the target completes one
+# lap of its circuit (two for the circle: duration 0, loops in yaw_camera_speed/*.yaml).
+#
+# Run on the bismark, Isaac then Gazebo, in the background:
+#   aero study scenarios/studies/yaw_camera_speed.yaml --sims isaac,gazebo
+#   aero study status          # runs done / left, current run, estimated end
+#   aero logs study            # the full log
+# Output: datasets/studies/yaw_camera_speed_<sim>_<date>/summary.csv (one row per run, with a
+# "simulator" column); analysis: ros2 run aero_pursuit analyze_study.py <that folder>.
+name: yaw_camera_speed
+repetitions: 3
+scenarios:                            # one lap each (yaw_camera_speed/*.yaml)
+  - yaw_camera_speed/circle.yaml
+  - yaw_camera_speed/helix.yaml
+  - yaw_camera_speed/zigzag.yaml
+  - yaw_camera_speed/figure8.yaml
+  - yaw_camera_speed/figure8_tilted.yaml
+  - yaw_camera_speed/lissajous3d.yaml
+
+# Fixed in every run (the GCS remembers values changed by hand: everything compared is set here).
+common:
+  pursuer: {detection: vision, acquisition: auto, start_after: 0}   # chase from the first instant
+  target: {max_speed: 12.0}           # executor cap (default 6 m/s); the X4 itself: 10 m/s, 8 m/s²
+  parameters:
+    /pursuit_controller_node:
+      max_vel: 12.0                   # pursuer speed limit [m/s] (PX4 MPC_XY_VEL_MAX = 12)
+      mpc.params.ref_horizontal: 1.0  # planar standoff: same altitude as the target
+      mpc.params.N: 50.0              # 2.5 s horizon (variant N50_dt50, compiled once and cached)
+      mpc.params.dt: 0.05
+      mpc.params.q_px: 10.0
+      mpc.params.q_py: 10.0
+      mpc.params.q_pz: 10.0
+      mpc.params.q_vx: 1.0
+      mpc.params.q_vy: 1.0
+      mpc.params.q_vz: 1.0
+      mpc.params.r_ax: 0.5
+      mpc.params.r_ay: 0.5
+      mpc.params.r_az: 0.5
+      mpc.params.q_f: 5.0
+      mpc.params.a_max_xy: 8.0        # [m/s²] = X4 (39 deg tilt; x500 thrust/weight ~1.7)
+      mpc.params.a_max_z: 4.0         # climbing 4 m/s² still fits beside 8 m/s² horizontal
+      mpc.params.q_psi: 5.0 
+      mpc.params.r_r: 0.5
+      mpc.params.r_max: 1.2
+    /gimbal:
+      pitch_deg: 0.0                  # fixed camera angle (and where the gimbal returns when lost)
+      max_rate_deg: 90.0
+
+axes:
+  yaw:                                # heading formulation (mpc.params.yaw_mode)
+    - {name: noyaw, parameters: {/pursuit_controller_node: {mpc.params.yaw_mode: 0.0}}}
+    - {name: pampc, parameters: {/pursuit_controller_node: {mpc.params.yaw_mode: 3.0}}}
+  camera:
+    - {name: fixed, parameters: {/gimbal: {auto_pitch: false}}}
+    - {name: track, parameters: {/gimbal: {auto_pitch: true}}}
+  speed:                              # target speed along its path [m/s] (X4 limit: 10)
+    - {name: v3, target_speed: 3.0}
+    - {name: v6_5, target_speed: 6.5}
+    - {name: v10, target_speed: 10.0}
+  distance:                           # standoff distance [m]
+    - {name: d7, parameters: {/pursuit_controller_node: {target_distance: 7.0}}}
+    - {name: d10, parameters: {/pursuit_controller_node: {target_distance: 10.0}}}

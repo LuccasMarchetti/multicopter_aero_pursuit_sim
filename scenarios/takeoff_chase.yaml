@@ -1,0 +1,29 @@
+name: takeoff_chase
+description: Alvo pousado no chão decola, sobe e foge em ziguezague
+duration: 60
+target:
+  start: [9, 0, 0.3]
+  path:
+  - trajectory:
+      type: line
+      points:
+      - [9, 0, 0.3]
+      - [9, 0, 5]
+      speed: 1.5
+  - trajectory:
+      type: waypoints
+      interpolation: spline
+      speed: 3.5
+      points:
+      - [9, 0, 5]
+      - [16, -6, 6]
+      - [22, 5, 7]
+      - [28, -5, 6]
+      - [34, 4, 7]
+      - [40, 0, 6]
+  - hover: 3
+pursuer:
+  start: [0, 0, 4]
+  detection: vision
+  acquisition: auto
+  start_after: 1

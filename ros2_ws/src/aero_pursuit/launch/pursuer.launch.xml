@@ -1,0 +1,69 @@
+<launch>
+  <!--
+    Pursuer only: the nodes that would run on board (Raspberry Pi 5, docs/RASPBERRY.md). The
+    world (Gazebo, PX4 SITL + XRCE agent, target, scenario runner, recorder, GCS) runs on another
+    computer with AERO_PURSUER_HOST=remote; everything else crosses the network over DDS.
+
+      ros2 launch aero_pursuit pursuer.launch.xml
+
+    Same parameter file as the simulation (config/aero_pursuit.yaml); the output and the MPC numbers
+    are switched at run time (GCS, run_study.py), as in the local setup.
+  -->
+  <arg name="world_name" default="lawn"/>
+  <arg name="parent_frame" default="$(var world_name)"/>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="dnn_target" default="cpu"/>
+  <arg name="image_topic" default="/camera/remote" description="RGB as JPEG (&lt;topic&gt;/compressed) from the simulator image_downscaler"/>
+  <arg name="camera_info_topic" default="/camera/remote/camera_info"/>
+  <arg name="depth_compressed" default="true" description="Profundidade em PNG 16 bits (mm) pelo image_downscaler (depth_png_level >= 0)"/>
+  <arg name="params_file" default="$(find-pkg-share aero_pursuit)/config/aero_pursuit.yaml"/>
+  <arg name="vittrack_model_path"
+       default="$(find-pkg-share aero_pursuit)/models/object_tracking_vittrack_2023sep.onnx"/>
+  <arg name="log_level" default="warn"/>
+  <arg name="output" default="screen"/>
+
+  <node_container pkg="rclcpp_components" exec="component_container_mt"
+                  name="pursuer_container" namespace="" output="$(var output)"
+                  ros_args="--log-level $(var log_level)">
+    <env name="OPENCV_LOG_LEVEL" value="ERROR"/>
+
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::VisionTrackerNode" name="vision_tracker_node" namespace="">
+      <param from="$(var params_file)"/>
+      <param name="image_topic" value="$(var image_topic)"/>
+      <param name="camera_info_topic" value="$(var camera_info_topic)"/>
+      <param name="image_qos_reliable" value="true"/>
+      <param name="image_compressed" value="true"/>
+      <param name="depth_compressed" value="$(var depth_compressed)"/>
+      <param name="depth_topic" value="/depth_camera/remote"/>
+      <param name="depth_info_topic" value="/depth_camera/remote/camera_info"/>
+      <param name="vittrack_model_path" value="$(var vittrack_model_path)"/>
+      <param name="dnn_target" value="$(var dnn_target)"/>
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+      <extra_arg name="use_intra_process_comms" value="true"/>
+    </composable_node>
+
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::TargetEstimatorNode" name="target_estimator_node" namespace="">
+      <param from="$(var params_file)"/>
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+      <param name="world_frame" value="$(var parent_frame)"/>
+    </composable_node>
+
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::PursuitControllerNode" name="pursuit_controller_node" namespace="">
+      <param from="$(var params_file)"/>
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+    </composable_node>
+
+    <!-- Pitch gimbal: camera TF from the measured joint (/gimbal/joint_states) and the pointing law;
+         commands the joint over ROS (/gimbal/cmd/pitch, bridged to the simulator on its side).
+         Without it there is no camera TF: the acquisition cannot project the target. -->
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::GimbalNode" name="gimbal" namespace="">
+      <param from="$(var params_file)"/>
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+    </composable_node>
+
+    <!-- Offboard heartbeat in wall time (independent of /clock) -->
+    <composable_node pkg="aero_pursuit" plugin="aero_pursuit::OffboardControlNode" name="offboard_control" namespace="">
+      <param from="$(var params_file)"/>
+    </composable_node>
+  </node_container>
+</launch>

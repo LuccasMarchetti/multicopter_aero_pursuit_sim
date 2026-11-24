@@ -1,0 +1,68 @@
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazil]{babel}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsfonts,bm}
+\usepackage{mathtools}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[most]{tcolorbox}
+\usepackage{siunitx}
+\usepackage[hidelinks]{hyperref}
+\usepackage[brazilian,nameinlink]{cleveref}
+
+\sisetup{output-decimal-marker={,}, group-separator={.}}
+
+% ---------- Layout: tabelas compactas e quebra de nomes longos ----------
+\emergencystretch=3em
+\setlength{\tabcolsep}{4pt}
+\AtBeginEnvironment{tabular}{\small}
+\usepackage{xurl}
+% Ordinais (a fonte Latin Modern no XeTeX/Tectonic não tem "ª"/"º")
+\usepackage{newunicodechar}
+\newunicodechar{ª}{\textsuperscript{a}}
+\newunicodechar{º}{\textsuperscript{o}}
+\graphicspath{{figuras/}}
+
+% ---------- Caixas ----------
+\newtcolorbox{dica}[1][]{colback=blue!4,colframe=blue!50!black,
+  fonttitle=\bfseries,title={Dica prática},#1}
+\newtcolorbox{receita}[1][]{colback=green!4,colframe=green!40!black,
+  fonttitle=\bfseries,title={Receita de projeto},#1}
+\newtcolorbox{codigo}[1][]{colback=orange!4,colframe=orange!60!black,
+  fonttitle=\bfseries,title={No código (C++)},#1}
+\newtcolorbox{atencao}[1][]{colback=red!4,colframe=red!60!black,
+  fonttitle=\bfseries,title={Atenção},#1}
+
+% ---------- Listagens MATLAB ----------
+\definecolor{mlkw}{RGB}{0,0,200}
+\definecolor{mlcm}{RGB}{34,139,34}
+\definecolor{mlst}{RGB}{160,32,240}
+\lstdefinestyle{matlab}{language=Matlab,basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{mlkw},commentstyle=\color{mlcm},stringstyle=\color{mlst},
+  numbers=left,numberstyle=\tiny\color{gray},frame=single,breaklines=true,
+  showstringspaces=false,columns=fullflexible,
+  literate={á}{{\'a}}1 {ã}{{\~a}}1 {é}{{\'e}}1 {ê}{{\^e}}1 {í}{{\'i}}1
+           {ó}{{\'o}}1 {õ}{{\~o}}1 {ú}{{\'u}}1 {ç}{{\c c}}1 {â}{{\^a}}1}
+\lstset{style=matlab}
+
+% ---------- Notação ----------
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\vect}[1]{\bm{#1}}
+\newcommand{\ep}{\vect{e}_p}
+\newcommand{\ev}{\vect{e}_v}
+\newcommand{\rr}{\vect{r}}
+\newcommand{\rhat}{\hat{\vect{r}}}
+\newcommand{\T}{^{\mathsf{T}}}
+\newcommand{\Ts}{T_s}
+\newcommand{\code}[1]{\texttt{#1}}
+% Permite quebrar linha depois de "_" (identificadores longos do C++/ROS)
+\let\underscoreorig\_
+\renewcommand{\_}{\underscoreorig\allowbreak}
+\DeclareMathOperator{\sat}{sat}
+\DeclareMathOperator{\sgn}{sgn}

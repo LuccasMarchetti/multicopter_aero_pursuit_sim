@@ -1,0 +1,87 @@
+{
+  // Depuração dos nós C++ do aero_pursuit (requer a extensão C/C++ ms-vscode.cpptools).
+  // Compile com símbolos antes: tarefa "colcon: build RelWithDebInfo" ou ./ros2_ws/debug_attach.sh build
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Anexa ao container em execução (todos os componentes). Requer
+      // `sudo sysctl -w kernel.yama.ptrace_scope=0` (ou rodar o VS Code com permissão).
+      "name": "aero_pursuit: anexar ao container",
+      "type": "cppdbg",
+      "request": "attach",
+      "program": "/opt/ros/jazzy/lib/rclcpp_components/component_container_mt",
+      "processId": "${command:pickProcess}",
+      "MIMode": "gdb",
+      "miDebuggerPath": "${workspaceFolder}/ros2_ws/tools/gdb_ros.sh",
+      "setupCommands": [
+        {"text": "-enable-pretty-printing", "ignoreFailures": true},
+        {"text": "handle SIGINT nostop pass"},
+        {"text": "handle SIGPIPE nostop noprint pass"}
+      ]
+    },
+    {
+      // Com `./start_simulation.sh debug:=true` o container espera o depurador na porta 3000.
+      "name": "aero_pursuit: gdbserver :3000",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "/opt/ros/jazzy/lib/rclcpp_components/component_container_mt",
+      "cwd": "${workspaceFolder}/ros2_ws",
+      "MIMode": "gdb",
+      "miDebuggerPath": "${workspaceFolder}/ros2_ws/tools/gdb_ros.sh",
+      "miDebuggerServerAddress": "localhost:3000",
+      "setupCommands": [
+        {"text": "-enable-pretty-printing", "ignoreFailures": true},
+        {"text": "handle SIGINT nostop pass"}
+      ]
+    },
+    {
+      // Um nó isolado (fora do container), com os parâmetros do pacote.
+      "name": "aero_pursuit: pursuit_controller_node isolado",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/ros2_ws/install/aero_pursuit/lib/aero_pursuit/pursuit_controller_node",
+      "args": [
+        "--ros-args",
+        "--params-file", "${workspaceFolder}/ros2_ws/install/aero_pursuit/share/aero_pursuit/config/aero_pursuit.yaml",
+        "-p", "use_sim_time:=true",
+        "-p", "controller_type:=${input:controller}"
+      ],
+      "cwd": "${workspaceFolder}/ros2_ws",
+      "MIMode": "gdb",
+      "miDebuggerPath": "${workspaceFolder}/ros2_ws/tools/gdb_ros.sh",
+      "setupCommands": [{"text": "-enable-pretty-printing", "ignoreFailures": true}]
+    },
+    {
+      "name": "aero_pursuit: testes de controle (gtest)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/ros2_ws/build/aero_pursuit/test_control",
+      "args": ["--gtest_filter=${input:gtestFilter}"],
+      "cwd": "${workspaceFolder}/ros2_ws",
+      "MIMode": "gdb",
+      "miDebuggerPath": "${workspaceFolder}/ros2_ws/tools/gdb_ros.sh",
+      "setupCommands": [{"text": "-enable-pretty-printing", "ignoreFailures": true}]
+    },
+    {
+      "name": "aero_pursuit: core dump do container",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "/opt/ros/jazzy/lib/rclcpp_components/component_container_mt",
+      "coreDumpPath": "${input:corePath}",
+      "cwd": "${workspaceFolder}/ros2_ws",
+      "MIMode": "gdb",
+      "miDebuggerPath": "${workspaceFolder}/ros2_ws/tools/gdb_ros.sh"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "controller",
+      "type": "pickString",
+      "description": "Lei de controle",
+      "options": ["mpc", "lqr", "lqi", "pbvs_pid", "asmc", "hermite", "hybrid_pn", "external"],
+      "default": "mpc"
+    },
+    {"id": "gtestFilter", "type": "promptString", "description": "Filtro gtest", "default": "*"},
+    {"id": "corePath", "type": "promptString", "description": "Arquivo core (coredumpctl dump -o core)"}
+  ]
+}

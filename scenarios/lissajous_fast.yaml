@@ -1,0 +1,18 @@
+name: lissajous_fast
+description: 'Lissajous rápido (4 m/s, perto do limite de 3 m/s² do alvo: inclinações de ~15°)'
+duration: 60
+target:
+  start: [10, 0, 6]
+  path:
+  - trajectory:
+      type: lissajous
+      center: [22, 0, 7]
+      size: [10, 8, 1.5]
+      frequency: [1, 2, 1]
+      speed: 4.0
+    loops: 0
+pursuer:
+  start: [0, 0, 6]
+  detection: vision
+  acquisition: auto
+  start_after: 2

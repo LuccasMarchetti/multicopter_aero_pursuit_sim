@@ -1,0 +1,22 @@
+# Figure 8 of figure8_basic doubled (25 x 12.5 m, 120 m lap, curve radius >= 6 m) across the line of sight, its crossing point 10 m
+# ahead of the pursuer at the same altitude: the target starts there, moving sideways.
+name: figure8
+description: Flat figure 8 (lobes 25 m to each side, 120 m lap), crossing point 10 m ahead of the pursuer
+duration: 0                  # until the lap is complete
+target:
+  start: [10, 0, 12]
+  path:
+  - trajectory: eight
+    loops: 1
+pursuer:
+  start: [0, 0, 12]
+  detection: vision
+  acquisition: auto
+  start_after: 0
+trajectories:
+  eight:
+    type: figure8
+    center: [10, 0, 12]
+    size: [25, 12.5, 2]
+    heading_deg: 90
+    speed: 2.5

@@ -1,0 +1,16 @@
+name: s1_hover
+description: 'Option A S1: hovering target, start 8 m away (regulation)'
+duration: 45
+target:
+  start: [8, 0, 1]
+  path:
+  - trajectory:
+      type: hover
+      points:
+      - [8, 0, 6]
+      duration: 60
+pursuer:
+  start: [0, 0, 5]
+  detection: vision
+  acquisition: auto
+  start_after: 2

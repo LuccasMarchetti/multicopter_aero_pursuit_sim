@@ -1,0 +1,18 @@
+# Short version of battery_example.yaml (4 runs, ~4 min) to check the whole chain.
+name: battery_demo
+repetitions: 1
+scenarios: [../tuning/s2_line.yaml]
+common:
+  duration: 20
+  pursuer:
+    detection: omniscient
+  parameters:                 # fixed for every run
+    /pursuit_controller_node: {target_distance: 5.0, max_vel: 3.0, mpc.params.ref_horizontal: 1.0}
+    /scenario_runner: {target_speed: 0.0}   # the scenario/axis target_speed decides
+axes:
+  yaw:
+    - {name: hold, parameters: {/pursuit_controller_node: {mpc.params.yaw_mode: 0.0}}}
+    - {name: opt,  parameters: {/pursuit_controller_node: {mpc.params.yaw_mode: 3.0}}}
+  target:
+    - {name: t1, target_speed: 1.0}
+    - {name: t3, target_speed: 3.0}

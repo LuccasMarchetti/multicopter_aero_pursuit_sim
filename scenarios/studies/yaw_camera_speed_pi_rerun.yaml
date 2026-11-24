@@ -1,0 +1,5 @@
+# Cascade: the 27 runs of yaw_camera_speed_pi (20261122_124720) redone after the gimbal stop fix
+studies:
+- yaw_camera_speed_pi_rerun_zigzag.yaml
+- yaw_camera_speed_pi_rerun_figure8.yaml
+- yaw_camera_speed_pi_rerun_figure8_tilted.yaml

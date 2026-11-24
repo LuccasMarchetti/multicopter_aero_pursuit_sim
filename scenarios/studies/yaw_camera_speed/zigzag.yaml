@@ -1,0 +1,50 @@
+# tuning/s4_zigzag.yaml stretched 4.75 % along x and flown out and back once (the same zigzag
+# reversed): 150 m. The original is a 63 m open path, over in 6 s at 10 m/s.
+name: zigzag
+description: s4 zigzag (150 m) (abrupt lateral switches) out and back along x at 12 m (as the pursuer)
+duration: 0                  # until the lap is complete
+target:
+  start: [8, 0, 12]
+  path:
+  - trajectory: zz
+    loops: 1
+pursuer:
+  start: [0, 0, 12]
+  detection: vision
+  acquisition: auto
+  start_after: 0
+trajectories:
+  zz:
+    type: waypoints
+    interpolation: linear
+    speed: 1.9
+    points:
+    - [8, 0, 12]
+    - [11.89, 1.48, 12]
+    - [15.35, -1.16, 12]
+    - [19.74, 2.19, 12]
+    - [23.37, -0.59, 12]
+    - [26.72, 1.97, 12]
+    - [31.13, -1.39, 12]
+    - [37.15, 3.21, 12]
+    - [42.81, -1.11, 12]
+    - [48.36, 3.13, 12]
+    - [52.19, 0.2, 12]
+    - [57.02, 3.88, 12]
+    - [61.03, 0.82, 12]
+    - [64.72, 3.63, 12]
+    - [68.2, 0.98, 12]
+    - [64.72, 3.63, 12]
+    - [61.03, 0.82, 12]
+    - [57.02, 3.88, 12]
+    - [52.19, 0.2, 12]
+    - [48.36, 3.13, 12]
+    - [42.81, -1.11, 12]
+    - [37.15, 3.21, 12]
+    - [31.13, -1.39, 12]
+    - [26.72, 1.97, 12]
+    - [23.37, -0.59, 12]
+    - [19.74, 2.19, 12]
+    - [15.35, -1.16, 12]
+    - [11.89, 1.48, 12]
+    - [8, 0, 12]

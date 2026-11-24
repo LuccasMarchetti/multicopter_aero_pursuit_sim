@@ -1,0 +1,4 @@
+# Contexto mínimo: o código entra por volume, não pela imagem.
+*
+!docker/entrypoint.sh
+!ros2_ws/install_acados.sh
