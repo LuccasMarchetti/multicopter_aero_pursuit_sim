@@ -71,6 +71,15 @@ GREENS = LinearSegmentedColormap.from_list(
 YELLOWS = LinearSegmentedColormap.from_list(
     'seq_yellow', ['#fdf0c8', '#fbe29a', '#f6cf63', '#eeb72e', '#d69a0a', '#a87706', '#6e4d04'])
 PANEL_MAPS = [BLUES, GREENS, YELLOWS]   # one hue per panel, in order
+# Warm set (red, orange, purple): for the omniscient-detection references, so they are not mistaken
+# for the vision results (blue, green, yellow) next to them in the monograph.
+REDS = LinearSegmentedColormap.from_list(
+    'seq_red', ['#fde0dc', '#f9b4ab', '#f28374', '#e5533f', '#c8321f', '#9b2114', '#68130b'])
+ORANGES = LinearSegmentedColormap.from_list(
+    'seq_orange', ['#fde8d4', '#fbcf9f', '#f8b066', '#f28f2e', '#d9700e', '#a85307', '#6f3704'])
+PURPLES = LinearSegmentedColormap.from_list(
+    'seq_purple', ['#ece2f6', '#d3bdec', '#b593de', '#9468cc', '#7545b0', '#56298a', '#3a165f'])
+PALETTES = {'fria': [BLUES, GREENS, YELLOWS], 'quente': [REDS, ORANGES, PURPLES]}
 C_TARGET, C_PURSUER, C_ESTIMATE = '#eb6834', '#2a78d6', '#1baf7a'
 INK, INK_2, MUTED = '#0b0b0b', '#52514e', '#8a8984'
 
@@ -118,7 +127,7 @@ def cell_stats(rows, scenario, speed, distance, metric):
     return st.mean(vals), (st.stdev(vals) if len(vals) > 1 else 0.0), len(vals)
 
 
-def plot_maps(rows, metrics, distances, out, name, fig_title=''):
+def plot_maps(rows, metrics, distances, out, name, fig_title='', panel_maps=PANEL_MAPS):
     """One row of panels per distance (None: the distances pooled); the colour scale of a metric is
     the same in every row, so the rows compare."""
     scenarios = [s for s in SCENARIOS if any(x['scenario'] == s for x in rows)]
@@ -137,7 +146,7 @@ def plot_maps(rows, metrics, distances, out, name, fig_title=''):
                              figsize=(2.6 * len(metrics) + 1.2, (0.42 * len(scenarios) + 1.3) * len(distances)),
                              squeeze=False)
     for k, metric in enumerate(metrics):
-        cmap = PANEL_MAPS[k % len(PANEL_MAPS)]
+        cmap = panel_maps[k % len(panel_maps)]
         title, fmt, _, hint = METRICS[metric]
         vmin, vmax = (0.0, 100.0) if fmt.endswith('%') else (
             0.0, max(np.nanmax(stats[metric, d][0]) for d in distances))
@@ -494,6 +503,9 @@ def main():
     ap.add_argument('--title', default='', help='maps/compare: title above the panels')
     ap.add_argument('--against', type=Path, help='compare: summary.csv of the other study (B; the '
                     'first one is A, the maps show B - A)')
+    ap.add_argument('--palette', choices=list(PALETTES), default='fria',
+                    help="maps: colour ramps of the panels (fria: blue/green/yellow; quente: "
+                         "red/orange/purple, used for the omniscient references)")
     ap.add_argument('--filter', default='',
                     help='variant tokens that must all be present, comma-separated (e.g. pampc,track)')
     a = ap.parse_args()
@@ -509,11 +521,12 @@ def main():
             if m not in METRICS:
                 sys.exit(f'unknown metric {m} (one of {", ".join(METRICS)})')
         if a.pool_distances:
-            plot_maps(rows, metrics, [None], out, f'mapas_juntas{a.name}', a.title)
+            plot_maps(rows, metrics, [None], out, f'mapas_juntas{a.name}', a.title, PALETTES[a.palette])
         else:
-            plot_maps(rows, metrics, [d for d, _ in DISTANCES], out, f'mapas{a.name}', a.title)
+            plot_maps(rows, metrics, [d for d, _ in DISTANCES], out, f'mapas{a.name}', a.title,
+                      PALETTES[a.palette])
             for d, _ in DISTANCES:
-                plot_maps(rows, metrics, [d], out, f'mapas_{d}{a.name}')
+                plot_maps(rows, metrics, [d], out, f'mapas_{d}{a.name}', '', PALETTES[a.palette])
     elif a.figure == 'compare':
         if not a.against:
             sys.exit('compare needs --against <summary.csv>')
